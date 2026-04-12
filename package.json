@@ -1,29 +1,12 @@
 {
   "name": "audit-dashboard",
   "version": "1.0.0",
-  "type": "module",
+  "main": "server.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "bcrypt": "^6.0.0",
-    "chart.js": "^4.5.1",
-    "chroma-js": "^3.2.0",
-    "cors": "^2.8.6",
-    "dotenv": "^17.4.1",
-    "express": "^5.2.1",
-    "file-saver": "^2.0.5",
-    "jsonwebtoken": "^9.0.3",
-    "jspdf": "^4.2.1",
-    "openai": "^6.34.0",
-    "sqlite": "^5.1.1",
-    "sqlite3": "^6.0.1",
-    "stripe": "^22.0.1",
-    "ws": "^8.20.0"
-  },
-  "main": "server.js",
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": ""
+    "express": "^4.19.2"
+  }
 }
