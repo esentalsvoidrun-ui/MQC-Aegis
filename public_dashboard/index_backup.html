@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Mission Control Dashboard</title>
+</head>
+
+<body style="background:#020617; color:white; font-family:sans-serif; padding:25px;">
+
+<h1>📊 Mission Control</h1>
+
+<!-- LIVE ALERTS -->
+<div style="background:#0f172a; padding:15px; border-radius:12px; margin-top:15px;">
+  <h3>🚨 Live Decision Feed</h3>
+  <div id="alerts">Waiting for signals...</div>
+</div>
+
+<!-- KPI -->
+<div style="display:flex; gap:10px; margin-top:20px;">
+
+  <div style="flex:1; background:#111b2e; padding:10px; border-radius:10px;">
+    👥 Users <h2 id="users">--</h2>
+  </div>
+
+  <div style="flex:1; background:#111b2e; padding:10px; border-radius:10px;">
+    💰 Revenue <h2 id="revenue">--</h2>
+  </div>
+
+  <div style="flex:1; background:#111b2e; padding:10px; border-radius:10px;">
+    📊 Sessions <h2 id="sessions">--</h2>
+  </div>
+
+</div>
+
+<!-- AI PANEL -->
+<div style="margin-top:20px; background:#111b2e; padding:15px; border-radius:12px;">
+  <h3>🧠 AI Analysis</h3>
+  <div id="ai">Loading...</div>
+</div>
+
+<script>
+
+function rand(min,max){return Math.floor(Math.random()*max)+min}
+
+async function loadDashboard() {
+
+  // AI insights (from decision engine)
+  const aiRes = await fetch("/api/insights");
+  const aiData = await aiRes.json();
+
+  // events + decisions
+  const eventsRes = await fetch("/events");
+  const events = await eventsRes.json();
+
+  const decRes = await fetch("/decisions");
+  const decisions = await decRes.json();
+
+  // KPI fake data (demo)
+  document.getElementById("users").innerText = rand(100,900);
+  document.getElementById("revenue").innerText = rand(1000,9000);
+  document.getElementById("sessions").innerText = rand(50,500);
+
+  // AI
+  document.getElementById("ai").innerHTML = aiData.insights;
+
+  // ALERT FEED
+  let html = "";
+
+  if (decisions.decisions && decisions.decisions.length > 0) {
+    decisions.decisions.forEach(d => {
+      html += "⚡ " + d.trigger + " → " + d.action + "<br>";
+    });
+  } else {
+    html = "No active decisions";
+  }
+
+  document.getElementById("alerts").innerHTML = html;
+}
+
+loadDashboard();
+setInterval(loadDashboard, 5000);
+
+</script>
+
+</body>
+</html>

@@ -1,16 +1,37 @@
-const express = require("express");
-const app = express();
+const http = require("http");
+const { WebSocketServer } = require("ws");
 
-const PORT = process.env.PORT || 3000;
-
-app.get("/", (req, res) => {
-  res.send("🔥 Audit Dashboard är live");
+const server = http.createServer((req, res) => {
+  res.end("Mythos alive");
 });
 
-app.get("/health", (req, res) => {
-  res.json({ status: "ok" });
+const wss = new WebSocketServer({ server });
+
+server.listen(3000, () => {
+  console.log("Mythos stable running on 3000");
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+wss.on("connection", (ws) => {
+  console.log("CLIENT CONNECTED");
+
+  const sendMetrics = () => {
+    const message = {
+      type: "metrics",
+      timestamp: Date.now(),
+      data: {
+        users: Math.floor(Math.random() * 10),
+        revenue: Math.floor(Math.random() * 1000),
+        sessions: Math.floor(Math.random() * 6)
+      }
+    };
+
+    ws.send(JSON.stringify(message));
+  };
+
+  sendMetrics();
+  const interval = setInterval(sendMetrics, 1000);
+
+  ws.on("close", () => clearInterval(interval));
 });
+
+wss.on("error", console.error);
