@@ -16,3 +16,9 @@ node_modules
 .env
 node_modules
 *.db
+.env
+node_modules
+*.db
+.env
+node_modules
+*.db
