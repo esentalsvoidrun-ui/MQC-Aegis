@@ -1,42 +1,43 @@
+import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { getDb } from "./db.js";
 
+const USERS_FILE = "./data/users.json";
 const SECRET = process.env.JWT_SECRET;
 
 if (!SECRET) {
   throw new Error("JWT_SECRET is missing");
 }
 
+function readUsers() {
+  if (!fs.existsSync(USERS_FILE)) return [];
+  return JSON.parse(fs.readFileSync(USERS_FILE, "utf8"));
+}
+
+function writeUsers(users) {
+  fs.mkdirSync("./data", { recursive: true });
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+}
+
 export async function register(email, password) {
-  const db = getDb();
+  const users = readUsers();
 
-  const existing = await db.get(
-    "SELECT id, email FROM users WHERE email = ?",
-    [email]
-  );
-
-  if (existing) {
+  if (users.find(u => u.email === email)) {
     throw new Error("User already exists");
   }
 
   const hash = await bcrypt.hash(password, 10);
+  const user = { id: Date.now(), email, password: hash };
 
-  const result = await db.run(
-    "INSERT INTO users (email, password) VALUES (?, ?)",
-    [email, hash]
-  );
+  users.push(user);
+  writeUsers(users);
 
-  return { id: result.lastID, email };
+  return { id: user.id, email: user.email };
 }
 
 export async function login(email, password) {
-  const db = getDb();
-
-  const user = await db.get(
-    "SELECT id, email, password FROM users WHERE email = ?",
-    [email]
-  );
+  const users = readUsers();
+  const user = users.find(u => u.email === email);
 
   if (!user) throw new Error("User not found");
 

@@ -5,46 +5,6 @@ function setStatus(text) {
   if (el) el.textContent = text;
 }
 
-function renderHistory(items) {
-  const box = document.getElementById("history");
-  if (!box) return;
-
-  if (!items || items.length === 0) {
-    box.innerHTML = "<p>No history yet.</p>";
-    return;
-  }
-
-  box.innerHTML = items.map(item => `
-    <div class="history-item">
-      <div><strong>${item.risk}</strong> — ${item.insight}</div>
-      <div style="opacity:.8;font-size:14px;">${item.action}</div>
-      <div style="opacity:.65;font-size:12px;">${item.created_at}</div>
-    </div>
-  `).join("");
-}
-
-async function loadHistory() {
-  if (!token) return;
-
-  try {
-    const res = await fetch("/api/history", {
-      headers: {
-        "Authorization": token
-      }
-    });
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      throw new Error(data.error || "Failed to load history");
-    }
-
-    renderHistory(data);
-  } catch (err) {
-    console.error("HISTORY ERROR:", err);
-  }
-}
-
 async function registerUser() {
   setStatus("Registering...");
 
@@ -59,7 +19,6 @@ async function registerUser() {
     });
 
     const data = await res.json();
-
     if (!res.ok) throw new Error(data.error || "Register failed");
 
     setStatus("Registered. Now log in.");
@@ -82,14 +41,12 @@ async function loginUser() {
     });
 
     const data = await res.json();
-
     if (!res.ok) throw new Error(data.error || "Login failed");
 
     token = data.token;
     localStorage.setItem("token", token);
     setStatus("Logged in");
     await loadInsights();
-    await loadHistory();
   } catch (err) {
     setStatus("Login error: " + err.message);
   }
@@ -134,7 +91,6 @@ async function loadInsights() {
     });
 
     const data = await res.json();
-
     if (!res.ok) throw new Error(data.error || "Failed to load insights");
 
     insightEl.textContent = data.insight || "No insight";
@@ -145,8 +101,6 @@ async function loadInsights() {
     if (data.risk === "LOW") riskEl.className = "risk-low";
     if (data.risk === "MEDIUM") riskEl.className = "risk-medium";
     if (data.risk === "HIGH") riskEl.className = "risk-high";
-
-    await loadHistory();
   } catch (err) {
     insightEl.textContent = "Failed to load AI insights";
     riskEl.textContent = "ERROR";
@@ -165,7 +119,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (token) {
     setStatus("Logged in");
     await loadInsights();
-    await loadHistory();
   } else {
     setStatus("Not logged in");
   }
