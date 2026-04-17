@@ -41,5 +41,18 @@ MQC Aegis is a real-time decision engine for correlated risk. It ingests live ev
 ## Local setup
 
 ### Install dependencies
+
 ```bash
 npm install
+```
+### Start the server
+
+```bash
+node src/server.js
+```
+
+### Open in browser
+
+```text
+http://localhost:3000
+```
