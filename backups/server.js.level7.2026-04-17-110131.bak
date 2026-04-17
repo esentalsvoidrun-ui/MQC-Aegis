@@ -471,18 +471,6 @@ function summarizeSignalCounts(incidents) {
     .map(([signal, count]) => ({ signal, count }));
 }
 
-function buildRiskTimeline() {
-  return incidentStore
-    .slice(0, 10)
-    .map((i) => ({
-      id: i.id,
-      label: `${i.type}:${i.user}`.slice(0, 18),
-      riskScore: i.riskScore,
-      severity: i.severity
-    }))
-    .reverse();
-}
-
 function buildInsightPayload() {
   const recentIncidents = incidentStore.slice(0, 8);
   const recentActions = actionStore.slice(0, 8);
@@ -533,7 +521,7 @@ function buildInsightPayload() {
 
   return {
     ok: true,
-    level: 7,
+    level: 6,
     summary,
     whatChanged,
     whyItMatters,
@@ -548,36 +536,12 @@ function buildInsightPayload() {
       rateLimitCount,
       openIncidents: incidentStore.length
     },
-    riskTimeline: buildRiskTimeline(),
     leadIncident: lead || null
   };
 }
 
-function getIncidentById(id) {
-  return incidentStore.find((i) => String(i.id) === String(id)) || null;
-}
-
-function buildIncidentDetail(id) {
-  const incident = getIncidentById(id);
-  if (!incident) return null;
-
-  const relatedEvents = eventStore
-    .filter((e) => e.user === incident.user)
-    .slice(0, 12);
-
-  const relatedActions = actionStore
-    .filter((a) => String(a.incidentId) === String(incident.id))
-    .slice(0, 12);
-
-  return {
-    incident,
-    relatedEvents,
-    relatedActions
-  };
-}
-
 app.get("/health", (req, res) => {
-  res.json({ ok: true, service: "SignalDesk", ws: true, time: nowIso(), level: 7 });
+  res.json({ ok: true, service: "SignalDesk", ws: true, time: nowIso(), level: 6 });
 });
 
 app.get("/api/incidents", (req, res) => {
@@ -590,53 +554,6 @@ app.get("/api/actions", (req, res) => {
 
 app.get("/api/summary", (req, res) => {
   res.json(buildInsightPayload());
-});
-
-app.get("/api/incidents/:id", (req, res) => {
-  const detail = buildIncidentDetail(req.params.id);
-  if (!detail) {
-    return res.status(404).json({ ok: false, error: "Incident not found" });
-  }
-  res.json({ ok: true, ...detail });
-});
-
-app.post("/api/incidents/:id/status", async (req, res) => {
-  try {
-    const incident = getIncidentById(req.params.id);
-    if (!incident) {
-      return res.status(404).json({ ok: false, error: "Incident not found" });
-    }
-
-    const nextStatus = req.body.status;
-    if (!["pending_review", "active_threat", "acknowledged", "resolved", "closed"].includes(nextStatus)) {
-      return res.status(400).json({ ok: false, error: "Invalid status" });
-    }
-
-    incident.status = nextStatus;
-    incident.lastSeenAt = nowIso();
-
-    await updateIncidentRecord(incident);
-
-    const actionRecord = {
-      incidentId: incident.id,
-      action: nextStatus === "resolved" || nextStatus === "closed" ? "resolve" : "acknowledge",
-      reason: `status:${nextStatus}`,
-      createdAt: nowIso()
-    };
-
-    await persistAction(actionRecord);
-    actionStore.unshift(actionRecord);
-    if (actionStore.length > 100) actionStore.length = 100;
-
-    broadcast("incident_updated", incident);
-    broadcast("action", actionRecord);
-    broadcast("summary", buildInsightPayload());
-
-    res.json({ ok: true, incident, action: actionRecord });
-  } catch (error) {
-    console.error("POST /api/incidents/:id/status failed:", error);
-    res.status(500).json({ ok: false, error: error.message });
-  }
 });
 
 app.post("/event", async (req, res) => {

@@ -1,0 +1,1479 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SignalDesk // Risk War Room</title>
+  <style>
+    :root {
+      --bg-1: #050816;
+      --bg-2: #09112a;
+      --panel: rgba(10, 18, 40, 0.82);
+      --panel-strong: rgba(12, 20, 46, 0.96);
+      --line: rgba(255,255,255,0.09);
+      --text: #f4f7ff;
+      --muted: #92a0c6;
+      --blue: #5aa9ff;
+      --cyan: #4df0ff;
+      --green: #39d98a;
+      --yellow: #ffd24d;
+      --orange: #ff9f43;
+      --red: #ff4d6d;
+      --purple: #9c7bff;
+      --shadow: 0 18px 50px rgba(0,0,0,0.42);
+      --radius: 18px;
+      --glow-red: 0 0 18px rgba(255,77,109,0.35);
+      --glow-blue: 0 0 18px rgba(90,169,255,0.28);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 15% 0%, rgba(90,169,255,0.18), transparent 28%),
+        radial-gradient(circle at 90% 10%, rgba(156,123,255,0.16), transparent 22%),
+        radial-gradient(circle at 50% 100%, rgba(255,77,109,0.08), transparent 28%),
+        linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 100%);
+    }
+
+    .scanlines::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(255,255,255,0.015),
+        rgba(255,255,255,0.015) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+      opacity: 0.22;
+      z-index: 0;
+    }
+
+    .wrap {
+      position: relative;
+      z-index: 1;
+      width: min(1540px, calc(100% - 30px));
+      margin: 18px auto 26px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.35fr 0.95fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .hero-main {
+      padding: 22px 24px;
+      min-height: 170px;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(90,169,255,0.16), transparent 24%),
+        linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015));
+    }
+
+    .hero-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 18px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(90,169,255,0.18);
+      background: rgba(90,169,255,0.08);
+      color: #cfe6ff;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 10px;
+    }
+
+    .eyebrow-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--cyan);
+      box-shadow: 0 0 12px rgba(77,240,255,0.85);
+    }
+
+    .hero-main h1 {
+      margin: 0;
+      font-size: 38px;
+      line-height: 1;
+      letter-spacing: -0.045em;
+    }
+
+    .hero-main p {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+      max-width: 760px;
+    }
+
+    .hero-strip {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+
+    .pulse-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--line);
+      font-size: 13px;
+      color: var(--text);
+    }
+
+    .pulse-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 14px rgba(57,217,138,0.8);
+      animation: pulse 1.4s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.18); opacity: 0.65; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      padding: 18px;
+      min-height: 170px;
+    }
+
+    .mini-stat {
+      padding: 16px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.035);
+    }
+
+    .mini-stat .label {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .mini-stat .value {
+      font-size: 32px;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+
+    .mini-stat .sub {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .stats-band {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .band-card {
+      padding: 14px 16px;
+      min-height: 88px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.03);
+    }
+
+    .band-card .k {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .band-card .v {
+      font-size: 28px;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+
+    .band-card .s {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1.3fr 0.95fr;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .stack {
+      display: grid;
+      gap: 16px;
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-title {
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .panel-sub {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
+    .filters {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    button, select, textarea {
+      font: inherit;
+    }
+
+    .btn, .select {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.045);
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .btn:hover, .select:hover {
+      background: rgba(255,255,255,0.085);
+    }
+
+    .btn.primary {
+      background: rgba(90,169,255,0.16);
+      border-color: rgba(90,169,255,0.28);
+      box-shadow: var(--glow-blue);
+    }
+
+    .btn.success {
+      background: rgba(57,217,138,0.14);
+      border-color: rgba(57,217,138,0.26);
+    }
+
+    .btn.warn {
+      background: rgba(255,159,67,0.14);
+      border-color: rgba(255,159,67,0.28);
+    }
+
+    .btn.danger {
+      background: rgba(255,77,109,0.14);
+      border-color: rgba(255,77,109,0.28);
+      box-shadow: var(--glow-red);
+    }
+
+    .table-wrap {
+      overflow: auto;
+      max-height: 460px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      padding: 14px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      white-space: nowrap;
+      font-size: 14px;
+      vertical-align: middle;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      position: sticky;
+      top: 0;
+      background: rgba(8, 14, 32, 0.98);
+      z-index: 2;
+    }
+
+    tbody tr {
+      transition: background 0.18s ease, transform 0.12s ease;
+      cursor: pointer;
+    }
+
+    tbody tr:hover {
+      background: rgba(255,255,255,0.04);
+    }
+
+    tbody tr.active {
+      background: rgba(90,169,255,0.12);
+      box-shadow: inset 3px 0 0 rgba(90,169,255,0.9);
+    }
+
+    tbody tr.sla-warn {
+      background: rgba(255,210,77,0.05);
+    }
+
+    tbody tr.sla-breach {
+      background: rgba(255,77,109,0.08);
+      box-shadow: inset 3px 0 0 rgba(255,77,109,0.9);
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 82px;
+      padding: 8px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      border: 1px solid transparent;
+    }
+
+    .sev-low, .status-resolved, .sla-ok {
+      background: rgba(57,217,138,0.14);
+      color: #aef5cf;
+      border-color: rgba(57,217,138,0.22);
+    }
+
+    .sev-medium, .status-pending_review, .sla-warn-badge {
+      background: rgba(255,210,77,0.14);
+      color: #ffe38e;
+      border-color: rgba(255,210,77,0.24);
+    }
+
+    .sev-high, .status-approved, .status-executed {
+      background: rgba(255,159,67,0.16);
+      color: #ffd09f;
+      border-color: rgba(255,159,67,0.24);
+    }
+
+    .sev-critical, .status-rejected, .status-reversed, .action-block, .sla-breach-badge {
+      background: rgba(255,77,109,0.15);
+      color: #ffb4c1;
+      border-color: rgba(255,77,109,0.24);
+    }
+
+    .action-manual_review {
+      background: rgba(156,123,255,0.16);
+      color: #d7c8ff;
+      border-color: rgba(156,123,255,0.24);
+    }
+
+    .action-rate_limit {
+      background: rgba(90,169,255,0.15);
+      color: #c2e0ff;
+      border-color: rgba(90,169,255,0.24);
+    }
+
+    .action-log, .sla-neutral {
+      background: rgba(255,255,255,0.08);
+      color: #dbe5ff;
+      border-color: rgba(255,255,255,0.12);
+    }
+
+    .triple {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .feed-card {
+      min-height: 300px;
+      overflow: hidden;
+    }
+
+    .feed-list {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      max-height: 330px;
+      overflow: auto;
+    }
+
+    .feed-item {
+      padding: 12px 13px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.035);
+    }
+
+    .feed-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+    }
+
+    .feed-title {
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .feed-meta {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .detail {
+      padding: 18px;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .detail-box {
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.04);
+    }
+
+    .detail-box .k {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 8px;
+    }
+
+    .detail-box .v {
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.45;
+      word-break: break-word;
+    }
+
+    .reason-list {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .chip {
+      padding: 8px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #dce7ff;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--line);
+    }
+
+    .actions-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 96px;
+      resize: vertical;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.04);
+      color: var(--text);
+      padding: 12px 14px;
+      outline: none;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+      max-height: 360px;
+      overflow: auto;
+    }
+
+    .timeline-item {
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.035);
+    }
+
+    .timeline-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+
+    .timeline-meta {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+
+    .timeline-note {
+      color: #dce7ff;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .empty {
+      padding: 28px 16px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .footer-note {
+      margin-top: 14px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .glow-red { box-shadow: var(--glow-red); }
+    .glow-blue { box-shadow: var(--glow-blue); }
+
+    @media (max-width: 1350px) {
+      .stats-band {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .triple {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 1180px) {
+      .hero,
+      .layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 860px) {
+      .hero-stats,
+      .stats-band,
+      .detail-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 680px) {
+      .hero-stats,
+      .stats-band,
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .wrap {
+        width: min(100% - 16px, 1540px);
+      }
+
+      .hero-main h1 {
+        font-size: 30px;
+      }
+    }
+  </style>
+</head>
+<body class="scanlines">
+  <div class="wrap">
+    <section class="hero">
+      <div class="card hero-main">
+        <div class="hero-top">
+          <div>
+            <div class="eyebrow">
+              <span class="eyebrow-dot"></span>
+              Live Decision Engine
+            </div>
+            <h1>SignalDesk // Risk War Room</h1>
+            <p id="heroSummary">
+              Waiting for telemetry. A quiet field before the first hoofbeats.
+            </p>
+          </div>
+
+          <div class="pulse-pill">
+            <span class="pulse-dot"></span>
+            <span id="wsStatus">Connecting…</span>
+          </div>
+        </div>
+
+        <div class="hero-strip">
+          <div class="pulse-pill">Mode: <strong id="modeText">Simulated Enforcement</strong></div>
+          <div class="pulse-pill">Queue: <strong id="queueText">0 open</strong></div>
+          <div class="pulse-pill">Pressure: <strong id="pressureText">Calm</strong></div>
+        </div>
+      </div>
+
+      <div class="card hero-stats" id="heroStats">
+        <div class="mini-stat">
+          <div class="label">Critical</div>
+          <div class="value">0</div>
+          <div class="sub">No active fire</div>
+        </div>
+        <div class="mini-stat">
+          <div class="label">Pending</div>
+          <div class="value">0</div>
+          <div class="sub">Review queue</div>
+        </div>
+        <div class="mini-stat">
+          <div class="label">Executed</div>
+          <div class="value">0</div>
+          <div class="sub">Decision pushes</div>
+        </div>
+        <div class="mini-stat">
+          <div class="label">Avg Response</div>
+          <div class="value">0.0m</div>
+          <div class="sub">Creation → execute</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="stats-band" id="statsBand">
+      <div class="card band-card"><div class="k">High</div><div class="v">0</div><div class="s">Elevated risk cases</div></div>
+      <div class="card band-card"><div class="k">Approved</div><div class="v">0</div><div class="s">Ready for push</div></div>
+      <div class="card band-card"><div class="k">Reversed Today</div><div class="v">0</div><div class="s">Human rollbacks</div></div>
+      <div class="card band-card"><div class="k">False Positives</div><div class="v">0</div><div class="s">Rejected noise</div></div>
+      <div class="card band-card"><div class="k">Breaches</div><div class="v">0</div><div class="s">Aging beyond SLA</div></div>
+      <div class="card band-card"><div class="k">Warnings</div><div class="v">0</div><div class="s">Cases heating up</div></div>
+    </section>
+
+    <section class="layout">
+  <div class="stack">
+    <div class="card">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Decision Queue</div>
+          <div class="panel-sub">Oldest danger first. No polite chaos.</div>
+        </div>
+
+        <div class="filters">
+          <select class="select" id="statusFilter">
+            <option value="">All statuses</option>
+            <option value="pending_review">pending_review</option>
+            <option value="approved">approved</option>
+            <option value="executed">executed</option>
+            <option value="rejected">rejected</option>
+            <option value="reversed">reversed</option>
+          </select>
+
+          <select class="select" id="actionFilter">
+            <option value="">All actions</option>
+            <option value="block">block</option>
+            <option value="manual_review">manual_review</option>
+            <option value="rate_limit">rate_limit</option>
+            <option value="log">log</option>
+          </select>
+
+          <button class="btn primary" id="refreshBtn">Refresh</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="queue-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>User</th>
+              <th>Action</th>
+              <th>Status</th>
+              <th>Risk</th>
+              <th>Severity</th>
+              <th>SLA</th>
+            </tr>
+          </thead>
+          <tbody id="decisionQueueBody">
+  <tr data-case-id="1" onclick="window.selectedCaseId='1'; this.classList.add('selected-case')">
+    <td>#1</td>
+    <td>combo-user</td>
+    <td>block</td>
+    <td>pending_review</td>
+    <td>91</td>
+    <td>critical</td>
+    <td>BREACH</td>
+  </tr>
+</tbody>
+</table>
+</div>
+
+<div class="actions-row">
+<button class="action-btn" data-action="approve" onclick="sendCaseAction('approve')">Approve</button>
+<button class="action-btn" data-action="execute" onclick="sendCaseAction('execute')">Execute</button>
+<button class="action-btn" data-action="reject" onclick="sendCaseAction('reject')">Reject</button>
+<button class="action-btn" data-action="reverse" onclick="sendCaseAction('reverse')">Reverse</button>
+</div>
+</div>
+</div>
+</section> 
+
+    <div class="footer-note">
+      Simulated enforcement active. Wise men test the sword before battle.
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      incidents: [],
+      actions: [],
+      decisions: [],
+      selectedDecisionId: null,
+      currentCase: null,
+      summary: null,
+      operatorStats: null
+    };
+
+    const SLA_WARN_MINUTES = 5;
+    const SLA_BREACH_MINUTES = 15;
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function fmtTime(ts) {
+      if (!ts) return "—";
+      try { return new Date(ts).toLocaleString("sv-SE"); } catch { return "—"; }
+    }
+
+    function shortTime(ts) {
+      if (!ts) return "—";
+      try { return new Date(ts).toLocaleTimeString("sv-SE"); } catch { return "—"; }
+    }
+
+    function severityClass(value) {
+      return `sev-${value || "low"}`;
+    }
+
+    function statusClass(value) {
+      return `status-${value || "resolved"}`;
+    }
+
+    function actionClass(value) {
+      return `action-${value || "log"}`;
+    }
+
+    function getDecisionAgeMs(decision) {
+      return Math.max(0, Date.now() - (decision?.createdAt || Date.now()));
+    }
+
+    function formatAge(ms) {
+      const minutes = Math.floor(ms / 60000);
+      const seconds = Math.floor((ms % 60000) / 1000);
+
+      if (minutes >= 60) {
+        const hours = Math.floor(minutes / 60);
+        const rem = minutes % 60;
+        return `${hours}h ${rem}m`;
+      }
+
+      if (minutes > 0) return `${minutes}m ${seconds}s`;
+      return `${seconds}s`;
+    }
+
+    function getSlaState(decision) {
+      if (!decision) return { label: "n/a", className: "sla-neutral", rowClass: "" };
+
+      const terminalStatuses = ["resolved", "rejected", "reversed", "executed"];
+      if (terminalStatuses.includes(decision.status)) {
+        return { label: "closed", className: "sla-neutral", rowClass: "" };
+      }
+
+      const ageMinutes = getDecisionAgeMs(decision) / 60000;
+
+      if (ageMinutes >= SLA_BREACH_MINUTES) {
+        return { label: "breach", className: "sla-breach-badge", rowClass: "sla-breach" };
+      }
+
+      if (ageMinutes >= SLA_WARN_MINUTES) {
+        return { label: "warn", className: "sla-warn-badge", rowClass: "sla-warn" };
+      }
+
+      return { label: "ok", className: "sla-ok", rowClass: "" };
+    }
+
+    function getFilteredDecisions() {
+      const status = document.getElementById("statusFilter").value;
+      const action = document.getElementById("actionFilter").value;
+
+      const filtered = state.decisions.filter((d) => {
+        if (status && d.status !== status) return false;
+        if (action && d.recommendedAction !== action) return false;
+        return true;
+      });
+
+      function slaRank(decision) {
+        const sla = getSlaState(decision).label;
+        if (sla === "breach") return 3;
+        if (sla === "warn") return 2;
+        if (sla === "ok") return 1;
+        return 0;
+      }
+
+      function statusRank(decision) {
+        if (decision.status === "pending_review") return 4;
+        if (decision.status === "approved") return 3;
+        if (decision.status === "executed") return 2;
+        if (decision.status === "reversed") return 1;
+        if (decision.status === "rejected") return 1;
+        if (decision.status === "resolved") return 0;
+        return 0;
+      }
+
+      return filtered.sort((a, b) => {
+        const slaDiff = slaRank(b) - slaRank(a);
+        if (slaDiff !== 0) return slaDiff;
+
+        const statusDiff = statusRank(b) - statusRank(a);
+        if (statusDiff !== 0) return statusDiff;
+
+        const riskDiff = (b.riskScore || 0) - (a.riskScore || 0);
+        if (riskDiff !== 0) return riskDiff;
+
+        return (a.createdAt || 0) - (b.createdAt || 0);
+      });
+    }
+
+    function renderHero(summary, stats) {
+      const critical = summary?.counts?.critical ?? 0;
+      const pending = summary?.decisions?.pendingReviews ?? 0;
+      const executed = summary?.decisions?.executed ?? 0;
+      const avgResponse = stats?.avgResponseMinutes ?? "0.0";
+
+      document.getElementById("heroSummary").textContent =
+        summary?.summary || "Waiting for telemetry. A quiet field before the first hoofbeats.";
+
+      document.getElementById("queueText").textContent = `${pending} open`;
+      document.getElementById("modeText").textContent = "Simulated Enforcement";
+
+      let pressure = "Calm";
+      if (critical > 0) pressure = "Critical";
+      else if (pending >= 5) pressure = "High";
+      else if (pending > 0) pressure = "Rising";
+      document.getElementById("pressureText").textContent = pressure;
+
+      document.getElementById("heroStats").innerHTML = `
+        <div class="mini-stat ${critical > 0 ? "glow-red" : ""}">
+          <div class="label">Critical</div>
+          <div class="value">${critical}</div>
+          <div class="sub">Immediate danger cases</div>
+        </div>
+        <div class="mini-stat ${pending > 0 ? "glow-blue" : ""}">
+          <div class="label">Pending</div>
+          <div class="value">${pending}</div>
+          <div class="sub">Open review queue</div>
+        </div>
+        <div class="mini-stat">
+          <div class="label">Executed</div>
+          <div class="value">${executed}</div>
+          <div class="sub">Simulated pushes</div>
+        </div>
+        <div class="mini-stat">
+          <div class="label">Avg Response</div>
+          <div class="value">${escapeHtml(avgResponse)}m</div>
+          <div class="sub">Creation → execute</div>
+        </div>
+      `;
+    }
+
+    function renderStatsBand(summary, stats) {
+      const high = summary?.counts?.high ?? 0;
+      const approved = stats?.approved ?? 0;
+      const reversed = stats?.reversedToday ?? 0;
+      const falsePositives = stats?.falsePositives ?? 0;
+
+      const decisions = state.decisions || [];
+      const breaches = decisions.filter((d) => getSlaState(d).label === "breach").length;
+      const warnings = decisions.filter((d) => getSlaState(d).label === "warn").length;
+
+      document.getElementById("statsBand").innerHTML = `
+        <div class="card band-card">
+          <div class="k">High</div>
+          <div class="v">${high}</div>
+          <div class="s">Elevated risk cases</div>
+        </div>
+        <div class="card band-card">
+          <div class="k">Approved</div>
+          <div class="v">${approved}</div>
+          <div class="s">Ready for push</div>
+        </div>
+        <div class="card band-card">
+          <div class="k">Reversed Today</div>
+          <div class="v">${reversed}</div>
+          <div class="s">Human rollbacks</div>
+        </div>
+        <div class="card band-card">
+          <div class="k">False Positives</div>
+          <div class="v">${falsePositives}</div>
+          <div class="s">Rejected noise</div>
+        </div>
+        <div class="card band-card ${breaches > 0 ? "glow-red" : ""}">
+          <div class="k">Breaches</div>
+          <div class="v">${breaches}</div>
+          <div class="s">Cases beyond SLA</div>
+        </div>
+        <div class="card band-card ${warnings > 0 ? "glow-blue" : ""}">
+          <div class="k">Warnings</div>
+          <div class="v">${warnings}</div>
+          <div class="s">Cases heating up</div>
+        </div>
+      `;
+    }
+
+    function renderDecisions() {
+      const tbody = document.getElementById("decisionTableBody");
+      const empty = document.getElementById("decisionEmpty");
+      const decisions = getFilteredDecisions();
+
+      if (!decisions.length) {
+        tbody.innerHTML = "";
+        empty.style.display = "block";
+        return;
+      }
+
+      <style>
+  .selected-case {
+    outline: 2px solid rgba(90, 160, 255, 0.95);
+    background: rgba(90, 160, 255, 0.08);
+  }
+
+  [data-case-id] {
+    cursor: pointer;
+  }
+</style>
+
+      tbody.innerHTML = decisions.map((d) => {
+        const sla = getSlaState(d);
+        const age = formatAge(getDecisionAgeMs(d));
+        return `
+          <tr data-id="${d.id}" class="${d.id === state.selectedDecisionId ? "active" : ""} ${sla.rowClass}">
+            <td class="mono">#${d.id}</td>
+            <td>${escapeHtml(d.user || "unknown")}</td>
+            <td><span class="badge ${actionClass(d.recommendedAction)}">${escapeHtml(d.recommendedAction)}</span></td>
+            <td><span class="badge ${statusClass(d.status)}">${escapeHtml(d.status)}</span></td>
+            <td><span class="badge ${sla.className}">${escapeHtml(sla.label)} · ${escapeHtml(age)}</span></td>
+            <td>${escapeHtml(d.riskScore)}</td>
+            <td><span class="badge ${severityClass(d.severity)}">${escapeHtml(d.severity)}</span></td>
+            <td>${escapeHtml(d.assignedTo || "—")}</td>
+            <td>${escapeHtml(shortTime(d.createdAt))}</td>
+          </tr>
+        `;
+      }).join("");
+
+      [...tbody.querySelectorAll("tr")].forEach((row) => {
+        row.addEventListener("click", () => selectDecision(Number(row.dataset.id)));
+      });
+    }
+
+    function renderFeed(listId, rows, type) {
+      const el = document.getElementById(listId);
+
+      if (!rows.length) {
+        el.innerHTML = `<div class="empty">No ${type} yet.</div>`;
+        return;
+      }
+
+      el.innerHTML = rows.slice(0, 20).map((item) => {
+        if (type === "incidents") {
+          return `
+            <div class="feed-item">
+              <div class="feed-top">
+                <div class="feed-title">${escapeHtml(item.type || "event")} · ${escapeHtml(item.user || "unknown")}</div>
+                <div><span class="badge ${severityClass(item.severity)}">${escapeHtml(item.severity)}</span></div>
+              </div>
+              <div class="feed-meta">
+                riskScore: ${escapeHtml(item.riskScore)} · action: ${escapeHtml(item.action)} · ip: ${escapeHtml(item.ip || "—")}<br>
+                ${escapeHtml(fmtTime(item.timestamp))}
+              </div>
+            </div>
+          `;
+        }
+
+        return `
+          <div class="feed-item">
+            <div class="feed-top">
+              <div class="feed-title">${escapeHtml(item.action)}</div>
+              <div class="feed-meta">${escapeHtml(item.time || "—")}</div>
+            </div>
+            <div class="feed-meta">
+              ${escapeHtml(item.reason || "No reason")}<br>
+              priority: ${escapeHtml(item.priority || "normal")} · source: ${escapeHtml(item.source || "system")}
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderHotFeed() {
+      const el = document.getElementById("hotFeed");
+      const hot = [...state.decisions]
+        .sort((a, b) => {
+          const slaA = getSlaState(a).label === "breach" ? 2 : getSlaState(a).label === "warn" ? 1 : 0;
+          const slaB = getSlaState(b).label === "breach" ? 2 : getSlaState(b).label === "warn" ? 1 : 0;
+          if (slaB !== slaA) return slaB - slaA;
+          return (b.riskScore || 0) - (a.riskScore || 0);
+        })
+        .slice(0, 12);
+
+      if (!hot.length) {
+        el.innerHTML = `<div class="empty">No hot cases yet.</div>`;
+        return;
+      }
+
+      el.innerHTML = hot.map((d) => {
+        const sla = getSlaState(d);
+        return `
+          <div class="feed-item" style="cursor:pointer;" onclick="selectDecision(${d.id})">
+            <div class="feed-top">
+              <div class="feed-title mono">#${escapeHtml(d.id)} · ${escapeHtml(d.user || "unknown")}</div>
+              <div><span class="badge ${sla.className}">${escapeHtml(sla.label)}</span></div>
+            </div>
+            <div class="feed-meta">
+              action: ${escapeHtml(d.recommendedAction)} · status: ${escapeHtml(d.status)}<br>
+              risk: ${escapeHtml(d.riskScore)} · age: ${escapeHtml(formatAge(getDecisionAgeMs(d)))}
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderCaseDetail(data) {
+      const el = document.getElementById("caseDetail");
+
+      if (!data || !data.decision) {
+        el.innerHTML = `<div class="empty">No case selected. Pick one from the queue.</div>`;
+        return;
+      }
+
+      const { decision, incident, timeline, enforcement } = data;
+      const reasonCodes = Array.isArray(decision.reasonCodes) ? decision.reasonCodes : [];
+      const noteValue = decision.note || "";
+      const sla = getSlaState(decision);
+      const ageText = formatAge(getDecisionAgeMs(decision));
+
+      el.innerHTML = `
+        <div class="detail-grid">
+          <div class="detail-box">
+            <div class="k">Decision</div>
+            <div class="v mono">#${escapeHtml(decision.id)}</div>
+          </div>
+          <div class="detail-box">
+            <div class="k">Incident</div>
+            <div class="v mono">${incident?.id ? "#" + escapeHtml(incident.id) : "—"}</div>
+          </div>
+          <div class="detail-box">
+            <div class="k">User</div>
+            <div class="v">${escapeHtml(decision.user || "unknown")}</div>
+          </div>
+          <div class="detail-box">
+            <div class="k">Recommended Action</div>
+            <div class="v"><span class="badge ${actionClass(decision.recommendedAction)}">${escapeHtml(decision.recommendedAction)}</span></div>
+          </div>
+          <div class="detail-box">
+            <div class="k">Status</div>
+            <div class="v"><span class="badge ${statusClass(decision.status)}">${escapeHtml(decision.status)}</span></div>
+          </div>
+          <div class="detail-box">
+            <div class="k">SLA / Age</div>
+            <div class="v"><span class="badge ${sla.className}">${escapeHtml(sla.label)}</span> &nbsp; ${escapeHtml(ageText)}</div>
+          </div>
+          <div class="detail-box">
+            <div class="k">Risk / Severity</div>
+            <div class="v">${escapeHtml(decision.riskScore)} · <span class="badge ${severityClass(decision.severity)}">${escapeHtml(decision.severity)}</span></div>
+          </div>
+          <div class="detail-box">
+            <div class="k">Assigned</div>
+            <div class="v">${escapeHtml(decision.assignedTo || "—")}</div>
+          </div>
+        </div>
+
+        <div class="detail-box" style="margin-bottom:16px;">
+          <div class="k">Incident Context</div>
+          <div class="v" style="font-size:14px;line-height:1.7;">
+            type: ${escapeHtml(incident?.type || "—")}<br>
+            ip: ${escapeHtml(incident?.ip || "—")}<br>
+            amount: ${escapeHtml(incident?.amount ?? "—")}<br>
+            correlation: ${escapeHtml(incident?.correlation?.reason || "none")}<br>
+            trend anomaly: ${escapeHtml(incident?.trendAnomaly?.reason || "none")}<br>
+            created: ${escapeHtml(fmtTime(decision.createdAt))}
+          </div>
+        </div>
+
+        <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;">Reason Codes</div>
+        <div class="reason-list">
+          ${reasonCodes.length
+            ? reasonCodes.map((code) => `<span class="chip">${escapeHtml(code)}</span>`).join("")
+            : `<span class="chip">no_reason_codes</span>`
+          }
+        </div>
+
+        <div class="actions-row">
+          <button class="action-btn" data-action="approve">Approve</button>
+<button class="action-btn" data-action="execute">Execute</button>
+<button class="action-btn" data-action="reject">Reject</button>
+<button class="action-btn" data-action="reverse">Reverse</button>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;">Operator Note</div>
+          <textarea id="caseNoteInput" placeholder="Write operator note...">${escapeHtml(noteValue)}</textarea>
+          <div style="margin-top:10px;">
+            <button class="btn primary" data-op="add-note">Add note</button>
+          </div>
+<style>
+.selected-case {
+  outline: 1px solid rgba(120, 180, 255, 0.9);
+  box-shadow: 0 0 0 1px rgba(120, 180, 255, 0.25) inset;
+}
+</style>       
+ </div>
+
+        <div class="detail-box" style="margin-bottom:16px;">
+          <div class="k">Enforcement</div>
+          <div class="v" style="font-size:14px;line-height:1.7;">
+            status: ${escapeHtml(enforcement?.status || "none")}<br>
+            action: ${escapeHtml(enforcement?.action || "—")}<br>
+            target: ${escapeHtml(enforcement?.targetId || "—")}<br>
+            mode: ${escapeHtml(enforcement?.mode || "—")}<br>
+            started: ${escapeHtml(fmtTime(enforcement?.startedAt))}<br>
+            ended: ${escapeHtml(fmtTime(enforcement?.endedAt))}
+          </div>
+        </div>
+
+        <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;">Timeline</div>
+        <div class="timeline">
+          ${(timeline || []).length
+            ? timeline.map((t) => `
+                <div class="timeline-item">
+                  <div class="timeline-top">
+                    <strong>${escapeHtml(t.action)}</strong>
+                    <span class="timeline-meta">${escapeHtml(fmtTime(t.timestamp))}</span>
+                  </div>
+                  <div class="timeline-meta">
+                    actor: ${escapeHtml(t.actorType)} / ${escapeHtml(t.actorId)} · ${escapeHtml(t.fromStatus || "—")} → ${escapeHtml(t.toStatus || "—")}
+                  </div>
+                  <div class="timeline-note">${escapeHtml(t.note || "—")}</div>
+                </div>
+              `).join("")
+            : `<div class="empty">No timeline entries yet.</div>`
+          }
+        </div>
+      `;
+
+      [...el.querySelectorAll("[data-op]")].forEach((btn) => {
+        btn.addEventListener("click", () => handleDecisionOperation(btn.dataset.op, decision.id));
+      });
+    }
+
+    async function api(url, options = {}) {
+      const res = await fetch(url, {
+        headers: { "Content-Type": "application/json" },
+        ...options
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Request failed");
+      return data;
+    }
+
+    async function loadInitialData() {
+      const [incidents, actions, decisions, summary, operatorStats] = await Promise.all([
+        api("/api/incidents"),
+        api("/api/actions"),
+        api("/api/decisions"),
+        api("/api/summary"),
+        api("/api/operator/stats")
+      ]);
+
+      state.incidents = incidents || [];
+      state.actions = actions || [];
+      state.decisions = decisions || [];
+      state.summary = summary || null;
+      state.operatorStats = operatorStats || null;
+
+      if (!state.selectedDecisionId && state.decisions.length) {
+        state.selectedDecisionId = state.decisions[0].id;
+      }
+
+      renderAll();
+
+      if (state.selectedDecisionId) {
+        await selectDecision(state.selectedDecisionId);
+      }
+    }
+
+    async function selectDecision(id) {
+      state.selectedDecisionId = id;
+      renderDecisions();
+
+      const data = await api(`/api/decisions/${id}`);
+      state.currentCase = data;
+      renderCaseDetail(data);
+    }
+
+    async function handleDecisionOperation(op, decisionId) {
+      try {
+        if (!decisionId) return;
+
+        if (op === "refresh-case") {
+          await selectDecision(decisionId);
+          await refreshSummaryAndStats();
+          return;
+        }
+
+        const currentNote = document.getElementById("caseNoteInput")?.value?.trim() || "";
+        let payload = { operatorId: "robert" };
+        let url = "";
+
+        if (op === "approve") {
+          url = `/api/decisions/${decisionId}/approve`;
+          payload.note = currentNote || "Approved by operator";
+        } else if (op === "reject") {
+          url = `/api/decisions/${decisionId}/reject`;
+          payload.note = currentNote || "Rejected by operator";
+        } else if (op === "execute") {
+          url = `/api/decisions/${decisionId}/execute`;
+          payload.note = currentNote || "Executed in simulated mode";
+        } else if (op === "reverse") {
+          url = `/api/decisions/${decisionId}/reverse`;
+          payload.note = currentNote || "Reversed by operator";
+        } else if (op === "assign") {
+          url = `/api/decisions/${decisionId}/assign`;
+          payload.assignedTo = "robert";
+          payload.note = currentNote || "Assigned to robert";
+        } else if (op === "add-note") {
+          url = `/api/decisions/${decisionId}/note`;
+          payload.note = currentNote || "Operator note added";
+        }
+
+        await api(url, {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+
+        await Promise.all([refreshDecisions(), refreshSummaryAndStats()]);
+        await selectDecision(decisionId);
+      } catch (error) {
+        alert(error.message);
+      }
+    }
+
+    async function refreshDecisions() {
+      const status = document.getElementById("statusFilter").value;
+      const action = document.getElementById("actionFilter").value;
+
+      const qs = new URLSearchParams();
+      if (status) qs.set("status", status);
+      if (action) qs.set("action", action);
+
+      state.decisions = await api(`/api/decisions${qs.toString() ? "?" + qs.toString() : ""}`);
+      renderDecisions();
+      renderHotFeed();
+      renderStatsBand(state.summary, state.operatorStats);
+    }
+
+    async function refreshSummaryAndStats() {
+      const [summary, operatorStats] = await Promise.all([
+        api("/api/summary"),
+        api("/api/operator/stats")
+      ]);
+
+      state.summary = summary;
+      state.operatorStats = operatorStats;
+      renderHero(state.summary, state.operatorStats);
+      renderStatsBand(state.summary, state.operatorStats);
+    }
+
+    function renderAll() {
+      renderHero(state.summary, state.operatorStats);
+      renderStatsBand(state.summary, state.operatorStats);
+      renderDecisions();
+      renderFeed("incidentFeed", state.incidents, "incidents");
+      renderFeed("actionFeed", state.actions, "actions");
+      renderHotFeed();
+      renderCaseDetail(state.currentCase);
+    }
+
+    function upsertById(arr, item) {
+      const idx = arr.findIndex((x) => x.id === item.id);
+      if (idx === -1) arr.unshift(item);
+      else arr[idx] = item;
+    }
+
+    function setupWs() {
+      const protocol = location.protocol === "https:" ? "wss" : "ws";
+      const ws = new WebSocket(`${protocol}://${location.host}`);
+      const wsStatus = document.getElementById("wsStatus");
+
+      ws.addEventListener("open", () => {
+        wsStatus.textContent = "Live engine connected";
+      });
+
+      ws.addEventListener("close", () => {
+        wsStatus.textContent = "Link lost";
+      });
+
+      ws.addEventListener("message", async (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+
+          if (msg.type === "bootstrap") {
+            state.incidents = msg.payload.incidents || [];
+            state.actions = msg.payload.actions || [];
+            state.decisions = msg.payload.decisions || [];
+            state.summary = msg.payload.summary || null;
+
+            renderAll();
+
+            if (!state.selectedDecisionId && state.decisions.length) {
+              state.selectedDecisionId = state.decisions[0].id;
+            }
+
+            if (state.selectedDecisionId) {
+              await selectDecision(state.selectedDecisionId);
+            }
+
+            await refreshSummaryAndStats();
+            return;
+          }
+
+          if (msg.type === "incident") {
+            upsertById(state.incidents, msg.payload);
+            renderFeed("incidentFeed", state.incidents, "incidents");
+            await refreshSummaryAndStats();
+            return;
+          }
+
+          if (msg.type === "action") {
+            upsertById(state.actions, msg.payload);
+            renderFeed("actionFeed", state.actions, "actions");
+            return;
+          }
+
+          if (msg.type === "decision" || msg.type === "decision_update") {
+            upsertById(state.decisions, msg.payload);
+            renderDecisions();
+            renderHotFeed();
+            renderStatsBand(state.summary, state.operatorStats);
+            await refreshSummaryAndStats();
+
+            if (state.selectedDecisionId === msg.payload.id) {
+              await selectDecision(msg.payload.id);
+            }
+            return;
+          }
+
+          if (msg.type === "summary") {
+            state.summary = msg.payload;
+            renderHero(state.summary, state.operatorStats);
+            renderStatsBand(state.summary, state.operatorStats);
+            return;
+          }
+
+          if (msg.type === "decision_timeline" || msg.type === "enforcement") {
+            if (state.selectedDecisionId) {
+              await selectDecision(state.selectedDecisionId);
+            }
+            await refreshSummaryAndStats();
+          }
+        } catch (err) {
+          console.error("WS parse error", err);
+        }
+      });
+    }
+
+    document.getElementById("refreshBtn").addEventListener("click", async () => {
+      await Promise.all([refreshDecisions(), refreshSummaryAndStats()]);
+      if (state.selectedDecisionId) {
+        await selectDecision(state.selectedDecisionId);
+      }
+    });
+
+    document.getElementById("statusFilter").addEventListener("change", refreshDecisions);
+    document.getElementById("actionFilter").addEventListener("change", refreshDecisions);
+
+    setInterval(() => {
+      renderDecisions();
+      renderHotFeed();
+      renderStatsBand(state.summary, state.operatorStats);
+      if (state.currentCase?.decision?.id === state.selectedDecisionId) {
+        renderCaseDetail(state.currentCase);
+      }
+    }, 15000);
+
+    loadInitialData().catch((err) => {
+      console.error(err);
+      alert("Failed to load dashboard: " + err.message);
+    });
+
+    setupWs();
+
+    window.selectDecision = selectDecision;
+  </script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MQC Aegis — AI Decision Engine</title>
+  <title>SignalDesk — AI Decision Engine</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -176,9 +176,9 @@
   <div class="wrap">
     <div class="topbar">
       <div>
-        <h1>MQC Aegis — AI Decision Engine</h1>
+        <h1>SignalDesk — AI Decision Engine</h1>
         <div class="sub">
-          From fragmented signals to operational action.
+          Live analysis. Real-time signals. AI-backed decisions. Correlation support for people who do not have time for nonsense.
         </div>
         <div class="minirow">
           <div class="mini" id="authStatus">Booting operator mode</div>

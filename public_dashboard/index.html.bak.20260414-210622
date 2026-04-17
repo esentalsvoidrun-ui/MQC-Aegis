@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SignalDesk – AI Decision Engine</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #121a2b;
+      --panel-2: #182235;
+      --border: #263247;
+      --text: #e5edf7;
+      --muted: #97a6ba;
+      --blue: #60a5fa;
+      --blue-2: #3b82f6;
+      --green: #4ade80;
+      --yellow: #facc15;
+      --red: #f87171;
+      --shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
+      --radius: 18px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      background:
+        radial-gradient(circle at 15% 20%, rgba(59,130,246,0.18), transparent 35%),
+        radial-gradient(circle at 85% 10%, rgba(74,222,128,0.12), transparent 30%),
+        linear-gradient(180deg, #0b1220 0%, #0f172a 100%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    ::selection {
+      background: var(--blue);
+      color: #000;
+    }
+
+    .app-shell {
+      max-width: 1400px;
+      margin: 0 auto;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .brand {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 20px;
+      padding: 24px;
+      background: rgba(18, 26, 43, 0.78);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 34px;
+      color: #fff;
+      letter-spacing: 0.3px;
+    }
+
+    .brand span {
+      display: inline-block;
+      margin-top: 6px;
+      color: var(--blue);
+      font-size: 13px;
+      letter-spacing: 1.8px;
+      text-transform: uppercase;
+    }
+
+    .brand small {
+      display: block;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .status-pill {
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(74, 222, 128, 0.12);
+      border: 1px solid rgba(74, 222, 128, 0.28);
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 1.1fr 1.1fr 1.6fr;
+      gap: 20px;
+    }
+
+    .card {
+      background: rgba(18, 26, 43, 0.82);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 22px;
+      backdrop-filter: blur(10px);
+    }
+
+    .metric-card {
+      min-height: 150px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+    }
+
+    .metric-value {
+      font-size: 38px;
+      font-weight: 700;
+      color: #fff;
+      margin: 10px 0 6px;
+    }
+
+    .metric-change {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .metric-change.up {
+      color: var(--green);
+    }
+
+    .metric-change.warn {
+      color: var(--yellow);
+    }
+
+    .metric-change.down {
+      color: var(--red);
+    }
+
+    .ai-panel {
+      min-height: 150px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      background:
+        linear-gradient(180deg, rgba(24,34,53,0.95) 0%, rgba(18,26,43,0.92) 100%);
+    }
+
+    .ai-panel h2 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      color: #fff;
+    }
+
+    .ai-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .ai-status {
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .ai-output {
+      margin-top: 14px;
+      padding: 16px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 92px;
+      white-space: pre-wrap;
+    }
+
+    .ai-actions {
+      margin-top: 16px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 12px;
+      padding: 11px 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.18s ease, opacity 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      opacity: 0.96;
+      box-shadow: 0 8px 24px rgba(59,130,246,0.25);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--blue), var(--blue-2));
+      color: white;
+    }
+
+    .btn-secondary {
+      background: rgba(255,255,255,0.05);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .lower-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 20px;
+    }
+
+    .table-card h3,
+    .activity-card h3 {
+      margin: 0 0 16px;
+      font-size: 18px;
+      color: #fff;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 14px 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      font-size: 14px;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    td {
+      color: var(--text);
+    }
+
+    .activity-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .activity-item {
+      padding: 14px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .activity-item strong {
+      display: block;
+      margin-bottom: 6px;
+      color: #fff;
+    }
+
+    .activity-item span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .loading-dots::after {
+      content: "";
+      display: inline-block;
+      width: 1.5em;
+      text-align: left;
+      animation: dots 1.2s steps(4, end) infinite;
+    }
+
+    @keyframes dots {
+      0% { content: ""; }
+      25% { content: "."; }
+      50% { content: ".."; }
+      75% { content: "..."; }
+      100% { content: ""; }
+    }
+
+    @media (max-width: 1180px) {
+      .dashboard-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .ai-panel {
+        grid-column: span 2;
+      }
+
+      .lower-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      body {
+        padding: 18px;
+      }
+
+      .brand {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .ai-panel {
+        grid-column: span 1;
+      }
+
+      .metric-value {
+        font-size: 30px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <div class="brand">
+      <div>
+        <h1>SignalDesk</h1>
+        <span>AI Decision Engine</span>
+        <small>Live analysis • Real-time signals • AI-backed decisions</small>
+      </div>
+      <div class="status-pill" id="system-status">● AI Connected</div>
+    </div>
+
+    <section class="dashboard-grid">
+      <div class="card metric-card">
+        <div class="metric-label">Users</div>
+        <div class="metric-value" id="usersValue">1,284</div>
+        <div class="metric-change up">↑ +12.4% vs last hour</div>
+      </div>
+
+      <div class="card metric-card">
+        <div class="metric-label">Revenue</div>
+        <div class="metric-value" id="revenueValue">$48,920</div>
+        <div class="metric-change up">↑ +8.1% trending upward</div>
+      </div>
+
+      <div class="card metric-card">
+        <div class="metric-label">Risk Score</div>
+        <div class="metric-value" id="riskValue">18</div>
+        <div class="metric-change warn">→ Stable but monitored</div>
+      </div>
+
+      <div class="card ai-panel">
+        <div>
+          <div class="ai-top">
+            <h2>AI Insights</h2>
+            <div class="ai-status" id="ai-status">Live Analysis</div>
+          </div>
+          <div class="ai-output" id="ai-output">Waiting for analysis...</div>
+        </div>
+
+        <div class="ai-actions">
+          <button class="btn btn-primary" onclick="runAI()">Refresh AI Analysis</button>
+          <button class="btn btn-secondary" onclick="demoSignal()">View Signals</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="lower-grid">
+      <div class="card table-card">
+        <h3>Decision Stream</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Event</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody id="decisionTable">
+              <tr>
+                <td>Payment review</td>
+                <td>Fraud Check</td>
+                <td>Approved</td>
+                <td>12:41</td>
+              </tr>
+              <tr>
+                <td>User anomaly</td>
+                <td>Behavior Signal</td>
+                <td>Flagged</td>
+                <td>12:39</td>
+              </tr>
+              <tr>
+                <td>Access request</td>
+                <td>Identity</td>
+                <td>Verified</td>
+                <td>12:37</td>
+              </tr>
+              <tr>
+                <td>Revenue spike</td>
+                <td>Business Signal</td>
+                <td>Observed</td>
+                <td>12:35</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card activity-card">
+        <h3>System Activity</h3>
+        <div class="activity-list" id="activityList">
+          <div class="activity-item">
+            <strong>AI model responded normally</strong>
+            <span>Confidence remains high across recent decision batches.</span>
+          </div>
+          <div class="activity-item">
+            <strong>Risk pattern detected</strong>
+            <span>A moderate anomaly cluster was observed in the latest event stream.</span>
+          </div>
+          <div class="activity-item">
+            <strong>Revenue trend strengthening</strong>
+            <span>Commercial activity continues above baseline over the last cycle.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    async function runAI() {
+      const output = document.getElementById("ai-output");
+      const status = document.getElementById("ai-status");
+      const systemStatus = document.getElementById("system-status");
+
+      output.textContent = "Analyserar signaler";
+      output.classList.add("loading-dots");
+      status.textContent = "Thinking...";
+      systemStatus.textContent = "● Processing";
+
+      try {
+        const res = await fetch("/api/ai-insight");
+        const data = await res.json();
+
+        output.classList.remove("loading-dots");
+        output.textContent = data.insight || data.analysis || "AI returned no insight.";
+        status.textContent = "Live Analysis";
+        systemStatus.textContent = "● AI Connected";
+      } catch (err) {
+        output.classList.remove("loading-dots");
+        output.textContent = "AI connection error.";
+        status.textContent = "Offline";
+        systemStatus.textContent = "● AI Offline";
+      }
+    }
+
+    function demoSignal() {
+      const output = document.getElementById("ai-output");
+      const status = document.getElementById("ai-status");
+
+      output.textContent = "Signal cluster shows stable commercial activity with moderate behavioral deviation in the latest event batch. Recommendation: continue monitoring anomaly density while preserving current approval thresholds.";
+      status.textContent = "Signal View";
+    }
+
+    window.addEventListener("load", () => {
+      setTimeout(() => {
+        runAI();
+      }, 600);
+    });
+  </script>
+</body>
+</html>
+

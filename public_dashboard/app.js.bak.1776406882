@@ -1,0 +1,3900 @@
+const incidentList = document.getElementById("incidentList");
+const actionList = document.getElementById("actionList");
+const authStatus = document.getElementById("authStatus");
+const connectionStatus = document.getElementById("connection-status");
+const summaryBox = document.getElementById("summaryBox");
+
+const apiBase = `${window.location.protocol}//${window.location.host}`;
+const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+const wsUrl = `${wsProtocol}://${window.location.host}`;
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function timeAgo(iso) {
+  if (!iso) return "unknown";
+  const diff = Date.now() - new Date(iso).getTime();
+  const sec = Math.max(0, Math.floor(diff / 1000));
+
+  if (sec < 5) return "just now";
+  if (sec < 60) return `${sec}s ago`;
+
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+
+  const day = Math.floor(hr / 24);
+  return `${day}d ago`;
+}
+
+function severityClass(severity) {
+  switch (severity) {
+    case "critical":
+      return "sev-critical";
+    case "high":
+      return "sev-high";
+    case "medium":
+      return "sev-medium";
+    default:
+      return "sev-low";
+  }
+}
+
+function actionLabel(action) {
+  if (action === "block") return "Block";
+  if (action === "manual_review") return "Manual review";
+  if (action === "rate_limit") return "Rate limit";
+  return "Log";
+}
+
+function renderSummary(data) {
+  if (!summaryBox) return;
+
+  const summary = data?.summary || "No summary yet.";
+  const recommendation = data?.recommendation || "Continue monitoring.";
+  const stats = data?.stats || {};
+
+  summaryBox.innerHTML = `
+    <div class="sd-card">
+      <div class="sd-card-header">
+        <div>
+          <div class="sd-eyebrow">AI Insights</div>
+          <div class="sd-title">Operational Summary</div>
+        </div>
+      </div>
+
+      <div class="sd-summary-text">${escapeHtml(summary)}</div>
+      <div class="sd-summary-rec">${escapeHtml(recommendation)}</div>
+
+      <div class="sd-stat-row">
+        <div class="sd-stat">
+          <div class="sd-stat-value">${stats.incidents ?? 0}</div>
+          <div class="sd-stat-label">Incidents</div>
+        </div>
+        <div class="sd-stat">
+          <div class="sd-stat-value">${stats.critical ?? 0}</div>
+          <div class="sd-stat-label">Critical</div>
+        </div>
+        <div class="sd-stat">
+          <div class="sd-stat-value">${stats.high ?? 0}</div>
+          <div class="sd-stat-label">High</div>
+        </div>
+        <div class="sd-stat">
+          <div class="sd-stat-value">${stats.recurring ?? 0}</div>
+          <div class="sd-stat-label">Recurring</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderIncidents(items = []) {
+  if (!incidentList) return;
+
+  if (!items.length) {
+    incidentList.innerHTML = `
+      <div class="sd-empty">
+        <div class="sd-empty-title">No incidents yet</div>
+        <div class="sd-empty-sub">The watch floor is quiet. Enjoy it while it lasts.</div>
+      </div>
+    `;
+    return;
+  }
+
+  incidentList.innerHTML = items
+    .map((incident) => {
+      const repeatCount = incident.repeatCount || 1;
+      const recurring = repeatCount > 1;
+
+      const repeatBadge = recurring
+        ? `<span class="sd-badge sd-badge-recurring">Recurring x${repeatCount}</span>`
+        : `<span class="sd-badge">First seen</span>`;
+
+      const severityBadge = `<span class="sd-badge ${severityClass(
+        incident.severity
+      )}">${escapeHtml((incident.severity || "low").toUpperCase())}</span>`;
+
+      const actionBadge = `<span class="sd-badge sd-badge-action">${escapeHtml(
+        actionLabel(incident.action)
+      )}</span>`;
+
+      const reasons = (incident.reasonCodes || [])
+        .map((reason) => `<span class="sd-chip">${escapeHtml(reason)}</span>`)
+        .join("");
+
+      const pressureText = recurring
+        ? `Seen again ${timeAgo(incident.lastSeenAt)}`
+        : `Opened ${timeAgo(incident.createdAt)}`;
+
+      return `
+        <div class="sd-card incident-card ${severityClass(incident.severity)}">
+          <div class="sd-card-header">
+            <div>
+              <div class="sd-eyebrow">Incident #${incident.id}</div>
+              <div class="sd-title">${escapeHtml(incident.type || "unknown")} · ${escapeHtml(
+        incident.user || "anonymous"
+      )}</div>
+            </div>
+            <div class="sd-badge-row">
+              ${severityBadge}
+              ${actionBadge}
+              ${repeatBadge}
+            </div>
+          </div>
+
+          <div class="sd-meta-row">
+            <div><strong>Risk:</strong> ${incident.riskScore ?? 0}</div>
+            <div><strong>Status:</strong> ${escapeHtml(incident.status || "pending_review")}</div>
+            <div><strong>SLA:</strong> ${escapeHtml(incident.sla || "-")}</div>
+            <div><strong>IP:</strong> ${escapeHtml(incident.ip || "-")}</div>
+          </div>
+
+          <div class="sd-meta-row">
+            <div><strong>Created:</strong> ${timeAgo(incident.createdAt)}</div>
+            <div><strong>Updated:</strong> ${timeAgo(incident.updatedAt)}</div>
+            <div><strong>Last seen:</strong> ${timeAgo(incident.lastSeenAt)}</div>
+            <div><strong>Repeats:</strong> ${repeatCount}</div>
+          </div>
+
+          <div class="sd-pressure ${recurring ? "sd-pressure-hot" : ""}">
+            ${escapeHtml(pressureText)}
+          </div>
+
+          ${
+            incident.correlationLabel && incident.correlationLabel !== "none"
+              ? `<div class="sd-note"><strong>Correlation:</strong> ${escapeHtml(
+                  incident.correlationLabel
+                )}</div>`
+              : ""
+          }
+
+          ${
+            incident.trendLabel && incident.trendLabel !== "normal"
+              ? `<div class="sd-note"><strong>Trend:</strong> ${escapeHtml(
+                  incident.trendLabel
+                )}</div>`
+              : ""
+          }
+
+          <div class="sd-chip-row">${reasons || `<span class="sd-chip">No reason codes</span>`}</div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function renderActions(items = []) {
+  if (!actionList) return;
+
+  if (!items.length) {
+    actionList.innerHTML = `
+      <div class="sd-empty">
+        <div class="sd-empty-title">No actions yet</div>
+        <div class="sd-empty-sub">No queued actions. For once, the machine is behaving.</div>
+      </div>
+    `;
+    return;
+  }
+
+  actionList.innerHTML = items
+    .map(
+      (action) => `
+        <div class="sd-card action-card">
+          <div class="sd-card-header">
+            <div>
+              <div class="sd-eyebrow">Action #${action.id}</div>
+              <div class="sd-title">${escapeHtml(action.title || action.type || "Action")}</div>
+            </div>
+            <div class="sd-badge-row">
+              <span class="sd-badge ${severityClass(action.severity)}">${escapeHtml(
+        (action.severity || "low").toUpperCase()
+      )}</span>
+            </div>
+          </div>
+
+          <div class="sd-meta-row">
+            <div><strong>User:</strong> ${escapeHtml(action.user || "-")}</div>
+            <div><strong>Status:</strong> ${escapeHtml(action.status || "pending")}</div>
+            <div><strong>Type:</strong> ${escapeHtml(action.type || "-")}</div>
+            <div><strong>Created:</strong> ${timeAgo(action.createdAt)}</div>
+          </div>
+        </div>
+      `
+    )
+    .join("");
+}
+
+async function fetchJson(path) {
+  const res = await fetch(`${apiBase}${path}`);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} on ${path}`);
+  }
+  return res.json();
+}
+
+async function refreshAll() {
+  try {
+    const [incidents, actions, summary] = await Promise.all([
+      fetchJson("/api/incidents"),
+      fetchJson("/api/actions"),
+      fetchJson("/api/summary")
+    ]);
+
+    renderIncidents(incidents);
+    renderActions(actions);
+    renderSummary(summary);
+
+    if (authStatus) authStatus.textContent = "Live";
+  } catch (error) {
+    console.error(error);
+    if (authStatus) authStatus.textContent = "API error";
+  }
+}
+
+function connectWs() {
+  const socket = new WebSocket(wsUrl);
+
+  socket.addEventListener("open", () => {
+    if (connectionStatus) connectionStatus.textContent = "WS connected";
+  });
+
+  socket.addEventListener("close", () => {
+    if (connectionStatus) connectionStatus.textContent = "WS disconnected";
+    setTimeout(connectWs, 1500);
+  });
+
+  socket.addEventListener("message", (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+
+      if (payload.type === "bootstrap") {
+        renderIncidents(payload.incidents || []);
+        renderActions(payload.actions || []);
+        renderSummary(payload.summary || {});
+        return;
+      }
+
+      if (
+        payload.type === "incident_created" ||
+        payload.type === "incident_merged" ||
+        payload.type === "action_created"
+      ) {
+        refreshAll();
+      }
+    } catch (error) {
+      console.error("WS parse error", error);
+    }
+  });
+}
+
+function injectStyles() {
+  if (document.getElementById("signaldesk-repeatcount-styles")) return;
+
+  const style = document.createElement("style");
+  style.id = "signaldesk-repeatcount-styles";
+  style.textContent = `
+    .sd-card {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+      backdrop-filter: blur(6px);
+    }
+
+    .sd-card-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      margin-bottom: 10px;
+    }
+
+    .sd-eyebrow {
+      font-size: 11px;
+      opacity: 0.7;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+
+    .sd-title {
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1.25;
+    }
+
+    .sd-badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: flex-end;
+    }
+
+    .sd-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .sev-critical {
+      border-color: rgba(255,255,255,0.12);
+    }
+
+    .sd-badge.sev-critical {
+      background: rgba(255, 80, 80, 0.18);
+      border-color: rgba(255, 80, 80, 0.35);
+    }
+
+    .sd-badge.sev-high {
+      background: rgba(255, 166, 0, 0.18);
+      border-color: rgba(255, 166, 0, 0.35);
+    }
+
+    .sd-badge.sev-medium {
+      background: rgba(255, 215, 0, 0.16);
+      border-color: rgba(255, 215, 0, 0.32);
+    }
+
+    .sd-badge.sev-low {
+      background: rgba(120, 180, 255, 0.16);
+      border-color: rgba(120, 180, 255, 0.32);
+    }
+
+    .sd-badge-recurring {
+      background: rgba(177, 120, 255, 0.22);
+      border-color: rgba(177, 120, 255, 0.36);
+    }
+
+    .sd-badge-action {
+      background: rgba(60, 210, 140, 0.16);
+      border-color: rgba(60, 210, 140, 0.3);
+    }
+
+    .sd-meta-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 8px;
+      margin: 10px 0;
+      font-size: 13px;
+      opacity: 0.92;
+    }
+
+    .sd-pressure {
+      margin-top: 8px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      font-weight: 700;
+      opacity: 0.88;
+    }
+
+    .sd-pressure-hot {
+      opacity: 1;
+    }
+
+    .sd-note {
+      margin-top: 8px;
+      font-size: 13px;
+      opacity: 0.92;
+    }
+
+    .sd-chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 12px;
+    }
+
+    .sd-chip {
+      font-size: 11px;
+      padding: 5px 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .sd-empty {
+      padding: 18px;
+      border-radius: 16px;
+      background: rgba(255,255,255,0.03);
+      border: 1px dashed rgba(255,255,255,0.12);
+    }
+
+    .sd-empty-title {
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .sd-empty-sub {
+      opacity: 0.72;
+      font-size: 13px;
+    }
+
+    .sd-summary-text {
+      margin-top: 8px;
+      line-height: 1.5;
+      font-size: 14px;
+    }
+
+    .sd-summary-rec {
+      margin-top: 8px;
+      font-size: 13px;
+      opacity: 0.85;
+      font-weight: 600;
+    }
+
+    .sd-stat-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .sd-stat {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      padding: 10px;
+    }
+
+    .sd-stat-value {
+      font-size: 18px;
+      font-weight: 800;
+      margin-bottom: 2px;
+    }
+
+    .sd-stat-label {
+      font-size: 11px;
+      opacity: 0.72;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+injectStyles();
+refreshAll();
+connectWs();
+setInterval(refreshAll, 10000);
+
+// =======================
+// HEAT / PRESSURE LOGIC
+// =======================
+
+function getPressureLevel(incident) {
+  const count = incident.repeatCount || 1;
+
+  if (count >= 5) return "critical";
+  if (count >= 3) return "high";
+  if (count >= 2) return "elevated";
+  return "normal";
+}
+
+function isFresh(iso) {
+  if (!iso) return false;
+  return (Date.now() - new Date(iso).getTime()) < 10000; // 10s
+}
+
+// Inject extra styles
+(function injectHeatStyles() {
+  if (document.getElementById("sd-heat-styles")) return;
+
+  const style = document.createElement("style");
+  style.id = "sd-heat-styles";
+  style.textContent = `
+    .incident-card.elevated {
+      box-shadow: 0 0 12px rgba(180,120,255,0.25);
+    }
+
+    .incident-card.high {
+      box-shadow: 0 0 18px rgba(255,166,0,0.35);
+      border-color: rgba(255,166,0,0.4);
+    }
+
+    .incident-card.critical {
+      box-shadow: 0 0 28px rgba(255,60,60,0.55);
+      border-color: rgba(255,60,60,0.6);
+      animation: pulseBorder 1.6s infinite;
+    }
+
+    @keyframes pulseBorder {
+      0% { box-shadow: 0 0 10px rgba(255,60,60,0.4); }
+      50% { box-shadow: 0 0 32px rgba(255,60,60,0.9); }
+      100% { box-shadow: 0 0 10px rgba(255,60,60,0.4); }
+    }
+
+    .sd-badge-hot {
+      background: rgba(255,60,60,0.25);
+      border-color: rgba(255,60,60,0.6);
+      animation: pulseBadge 1.6s infinite;
+    }
+
+    @keyframes pulseBadge {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+      100% { transform: scale(1); }
+    }
+
+    .fresh-dot {
+      display:inline-block;
+      width:8px;
+      height:8px;
+      border-radius:50%;
+      background:#00ffcc;
+      margin-left:6px;
+      animation: pulseDot 1s infinite;
+    }
+
+    @keyframes pulseDot {
+      0% { opacity:0.4; }
+      50% { opacity:1; }
+      100% { opacity:0.4; }
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+
+// =======================
+// PATCH renderIncidents
+// =======================
+
+const originalRenderIncidents = renderIncidents;
+
+renderIncidents = function(items = []) {
+  if (!incidentList) return;
+
+  if (!items.length) {
+    incidentList.innerHTML = `
+      <div class="sd-empty">
+        <div class="sd-empty-title">No incidents yet</div>
+        <div class="sd-empty-sub">The watch floor is quiet. Enjoy it while it lasts.</div>
+      </div>
+    `;
+    return;
+  }
+
+  incidentList.innerHTML = items.map((incident) => {
+    const repeatCount = incident.repeatCount || 1;
+    const pressure = getPressureLevel(incident);
+    const fresh = isFresh(incident.lastSeenAt);
+
+    const repeatBadgeClass =
+      repeatCount >= 5 ? "sd-badge sd-badge-hot" :
+      repeatCount >= 3 ? "sd-badge sev-high" :
+      repeatCount >= 2 ? "sd-badge sd-badge-recurring" :
+      "sd-badge";
+
+    const repeatBadge = `
+      <span class="${repeatBadgeClass}">
+        ${repeatCount > 1 ? `Recurring x${repeatCount}` : "First seen"}
+      </span>
+    `;
+
+    const freshnessDot = fresh ? `<span class="fresh-dot"></span>` : "";
+
+    return `
+      <div class="sd-card incident-card ${pressure}">
+        <div class="sd-card-header">
+          <div>
+            <div class="sd-eyebrow">
+              Incident #${incident.id} ${freshnessDot}
+            </div>
+            <div class="sd-title">
+              ${incident.type} · ${incident.user}
+            </div>
+          </div>
+
+          <div class="sd-badge-row">
+            <span class="sd-badge ${severityClass(incident.severity)}">
+              ${incident.severity.toUpperCase()}
+            </span>
+
+            <span class="sd-badge sd-badge-action">
+              ${actionLabel(incident.action)}
+            </span>
+
+            ${repeatBadge}
+          </div>
+        </div>
+
+        <div class="sd-meta-row">
+          <div><strong>Risk:</strong> ${incident.riskScore}</div>
+          <div><strong>Status:</strong> ${incident.status}</div>
+          <div><strong>SLA:</strong> ${incident.sla}</div>
+          <div><strong>Repeats:</strong> ${repeatCount}</div>
+        </div>
+
+        <div class="sd-meta-row">
+          <div><strong>Created:</strong> ${timeAgo(incident.createdAt)}</div>
+          <div><strong>Updated:</strong> ${timeAgo(incident.updatedAt)}</div>
+          <div><strong>Last seen:</strong> ${timeAgo(incident.lastSeenAt)}</div>
+        </div>
+
+        <div class="sd-pressure ${pressure !== "normal" ? "sd-pressure-hot" : ""}">
+          ${repeatCount > 1
+            ? `Pattern repeating (${repeatCount}x)`
+            : "Single occurrence"}
+        </div>
+
+        <div class="sd-chip-row">
+          ${(incident.reasonCodes || [])
+            .map(r => `<span class="sd-chip">${r}</span>`)
+            .join("")}
+        </div>
+      </div>
+    `;
+  }).join("");
+};
+
+
+// =======================
+// ESCALATION TIMELINE
+// =======================
+
+function getEscalationLabel(incident) {
+  const count = incident.repeatCount || 1;
+  if (count >= 5) return "critical pressure";
+  if (count >= 3) return "persistent";
+  if (count >= 2) return "recurring";
+  return "initial";
+}
+
+(function injectTimelineStyles() {
+  if (document.getElementById("sd-timeline-styles")) return;
+
+  const style = document.createElement("style");
+  style.id = "sd-timeline-styles";
+  style.textContent = `
+    .sd-timeline {
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .sd-timeline-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.68;
+      margin-bottom: 8px;
+    }
+
+    .sd-timeline-track {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .sd-step {
+      position: relative;
+      padding: 8px 6px;
+      border-radius: 10px;
+      font-size: 10px;
+      text-align: center;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      opacity: 0.45;
+    }
+
+    .sd-step.active {
+      opacity: 1;
+      background: rgba(255,255,255,0.08);
+    }
+
+    .sd-step.elevated {
+      border-color: rgba(177,120,255,0.38);
+      box-shadow: 0 0 10px rgba(177,120,255,0.16);
+    }
+
+    .sd-step.high {
+      border-color: rgba(255,166,0,0.42);
+      box-shadow: 0 0 12px rgba(255,166,0,0.18);
+    }
+
+    .sd-step.critical {
+      border-color: rgba(255,70,70,0.5);
+      box-shadow: 0 0 16px rgba(255,70,70,0.22);
+    }
+
+    .sd-timeline-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 8px;
+      font-size: 11px;
+      opacity: 0.8;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+function renderTimeline(incident) {
+  const count = incident.repeatCount || 1;
+
+  const stages = [
+    { key: "initial", label: "Initial", active: count >= 1, cls: "active" },
+    { key: "recurring", label: "Recurring", active: count >= 2, cls: count >= 2 ? "active elevated" : "" },
+    { key: "persistent", label: "Persistent", active: count >= 3, cls: count >= 3 ? "active high" : "" },
+    { key: "critical", label: "Critical", active: count >= 5, cls: count >= 5 ? "active critical" : "" }
+  ];
+
+  return `
+    <div class="sd-timeline">
+      <div class="sd-timeline-title">Escalation timeline · ${getEscalationLabel(incident)}</div>
+      <div class="sd-timeline-track">
+        ${stages.map(stage => `
+          <div class="sd-step ${stage.cls}">
+            ${stage.label}
+          </div>
+        `).join("")}
+      </div>
+      <div class="sd-timeline-meta">
+        <div><strong>First seen:</strong> ${timeAgo(incident.createdAt)}</div>
+        <div><strong>Updated:</strong> ${timeAgo(incident.updatedAt)}</div>
+        <div><strong>Last seen:</strong> ${timeAgo(incident.lastSeenAt)}</div>
+        <div><strong>Pattern state:</strong> ${getEscalationLabel(incident)}</div>
+      </div>
+    </div>
+  `;
+}
+
+// =======================
+// PATCH renderIncidents AGAIN
+// =======================
+
+renderIncidents = function(items = []) {
+  if (!incidentList) return;
+
+  if (!items.length) {
+    incidentList.innerHTML = `
+      <div class="sd-empty">
+        <div class="sd-empty-title">No incidents yet</div>
+        <div class="sd-empty-sub">The watch floor is quiet. Enjoy it while it lasts.</div>
+      </div>
+    `;
+    return;
+  }
+
+  incidentList.innerHTML = items.map((incident) => {
+    const repeatCount = incident.repeatCount || 1;
+    const pressure = getPressureLevel(incident);
+    const fresh = isFresh(incident.lastSeenAt);
+
+    const repeatBadgeClass =
+      repeatCount >= 5 ? "sd-badge sd-badge-hot" :
+      repeatCount >= 3 ? "sd-badge sev-high" :
+      repeatCount >= 2 ? "sd-badge sd-badge-recurring" :
+      "sd-badge";
+
+    const repeatBadge = `
+      <span class="${repeatBadgeClass}">
+        ${repeatCount > 1 ? `Recurring x${repeatCount}` : "First seen"}
+      </span>
+    `;
+
+    const freshnessDot = fresh ? `<span class="fresh-dot"></span>` : "";
+
+    return `
+      <div class="sd-card incident-card ${pressure}">
+        <div class="sd-card-header">
+          <div>
+            <div class="sd-eyebrow">
+              Incident #${incident.id} ${freshnessDot}
+            </div>
+            <div class="sd-title">
+              ${incident.type} · ${incident.user}
+            </div>
+          </div>
+
+          <div class="sd-badge-row">
+            <span class="sd-badge ${severityClass(incident.severity)}">
+              ${incident.severity.toUpperCase()}
+            </span>
+
+            <span class="sd-badge sd-badge-action">
+              ${actionLabel(incident.action)}
+            </span>
+
+            ${repeatBadge}
+          </div>
+        </div>
+
+        <div class="sd-meta-row">
+          <div><strong>Risk:</strong> ${incident.riskScore}</div>
+          <div><strong>Status:</strong> ${incident.status}</div>
+          <div><strong>SLA:</strong> ${incident.sla}</div>
+          <div><strong>Repeats:</strong> ${repeatCount}</div>
+        </div>
+
+        <div class="sd-meta-row">
+          <div><strong>Created:</strong> ${timeAgo(incident.createdAt)}</div>
+          <div><strong>Updated:</strong> ${timeAgo(incident.updatedAt)}</div>
+          <div><strong>Last seen:</strong> ${timeAgo(incident.lastSeenAt)}</div>
+        </div>
+
+        <div class="sd-pressure ${pressure !== "normal" ? "sd-pressure-hot" : ""}">
+          ${repeatCount > 1 ? `Pattern repeating (${repeatCount}x)` : "Single occurrence"}
+        </div>
+
+        <div class="sd-chip-row">
+          ${(incident.reasonCodes || [])
+            .map(r => `<span class="sd-chip">${r}</span>`)
+            .join("")}
+        </div>
+
+        ${renderTimeline(incident)}
+      </div>
+    `;
+  }).join("");
+};
+
+
+// =======================
+// CASE MEMORY / BLACK BOX
+// =======================
+
+(function injectBlackBoxStyles() {
+  if (document.getElementById("sd-blackbox-styles")) return;
+
+  const style = document.createElement("style");
+  style.id = "sd-blackbox-styles";
+  style.textContent = `
+    .sd-blackbox {
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .sd-blackbox-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.68;
+      margin-bottom: 8px;
+    }
+
+    .sd-history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .sd-history-item {
+      display: grid;
+      grid-template-columns: 90px 1fr;
+      gap: 10px;
+      align-items: start;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      font-size: 12px;
+    }
+
+    .sd-history-time {
+      opacity: 0.65;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .sd-history-text {
+      line-height: 1.35;
+      opacity: 0.95;
+    }
+
+    .sd-history-item.hot {
+      border-color: rgba(255,166,0,0.26);
+      background: rgba(255,166,0,0.06);
+    }
+
+    .sd-history-item.critical {
+      border-color: rgba(255,70,70,0.34);
+      background: rgba(255,70,70,0.08);
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+function mapAuditTypeToText(entry, incident) {
+  const details = entry.details || {};
+
+  if (entry.type === "opened") {
+    return {
+      text: `Case opened as ${details.severity || incident.severity} with action "${actionLabel(details.action || incident.action)}".`,
+      cls: ""
+    };
+  }
+
+  if (entry.type === "merged") {
+    return {
+      text: `Merged again. Pattern repeated ${details.repeatCountTo || incident.repeatCount || 1} times.`,
+      cls: (details.repeatCountTo || 1) >= 5 ? "critical" : "hot"
+    };
+  }
+
+  if (entry.type === "severity_changed") {
+    return {
+      text: `Severity changed from ${details.from} to ${details.to}.`,
+      cls: "hot"
+    };
+  }
+
+  if (entry.type === "risk_score_raised") {
+    return {
+      text: `Risk score increased from ${details.from} to ${details.to}.`,
+      cls: "hot"
+    };
+  }
+
+  if (entry.type === "reason_codes_expanded") {
+    return {
+      text: `Reason set expanded: ${(details.added || []).join(", ")}.`,
+      cls: ""
+    };
+  }
+
+  if (entry.type === "correlation_detected") {
+    return {
+      text: `Correlation detected: ${details.label}.`,
+      cls: "hot"
+    };
+  }
+
+  if (entry.type === "trend_detected") {
+    return {
+      text: `Trend anomaly active: ${details.label}.`,
+      cls: ""
+    };
+  }
+
+  if (entry.type === "action_created") {
+    return {
+      text: `Action created: ${details.title || details.actionType || "action"}.`,
+      cls: ""
+    };
+  }
+
+  if (entry.type === "assigned") {
+    return {
+      text: `Assigned to ${details.to}${details.from ? ` from ${details.from}` : ""}.`,
+      cls: ""
+    };
+  }
+
+  if (entry.type === "acknowledged") {
+    return {
+      text: `Acknowledged by ${details.operator || "operator"}${details.note ? ` · ${details.note}` : ""}.`,
+      cls: "hot"
+    };
+  }
+
+  if (entry.type === "resolved") {
+    return {
+      text: `Resolved by ${details.operator || "operator"}${details.resolution ? ` · ${details.resolution}` : ""}.`,
+      cls: "critical"
+    };
+  }
+
+  return {
+    text: entry.type,
+    cls: ""
+  };
+}
+
+function buildCaseHistory(incident) {
+  if (Array.isArray(incident.auditTrail) && incident.auditTrail.length) {
+    return incident.auditTrail.map((entry) => {
+      const mapped = mapAuditTypeToText(entry, incident);
+      return {
+        time: timeAgo(entry.at),
+        text: mapped.text,
+        cls: mapped.cls
+      };
+    });
+  }
+
+  const history = [];
+  const repeatCount = incident.repeatCount || 1;
+
+  history.push({
+    time: timeAgo(incident.createdAt),
+    text: `Case opened as ${incident.severity} with action "${actionLabel(incident.action)}".`,
+    cls: ""
+  });
+
+  if (repeatCount >= 2) {
+    history.push({
+      time: timeAgo(incident.lastSeenAt),
+      text: `Merged again. Pattern repeated ${repeatCount} times.`,
+      cls: repeatCount >= 5 ? "critical" : "hot"
+    });
+  }
+
+  return history;
+}
+
+function renderCaseHistory(incident) {
+  const history = buildCaseHistory(incident);
+
+  return `
+    <div class="sd-blackbox">
+      <div class="sd-blackbox-title">Case memory</div>
+      <div class="sd-history-list">
+        ${history.map(item => `
+          <div class="sd-history-item ${item.cls}">
+            <div class="sd-history-time">${item.time}</div>
+            <div class="sd-history-text">${item.text}</div>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+// =======================
+// PATCH renderIncidents AGAIN
+// =======================
+
+renderIncidents = function(items = []) {
+  if (!incidentList) return;
+
+  if (!items.length) {
+    incidentList.innerHTML = `
+      <div class="sd-empty">
+        <div class="sd-empty-title">No incidents yet</div>
+        <div class="sd-empty-sub">The watch floor is quiet. Enjoy it while it lasts.</div>
+      </div>
+    `;
+    return;
+  }
+
+  incidentList.innerHTML = items.map((incident) => {
+    const repeatCount = incident.repeatCount || 1;
+    const pressure = getPressureLevel(incident);
+    const fresh = isFresh(incident.lastSeenAt);
+
+    const repeatBadgeClass =
+      repeatCount >= 5 ? "sd-badge sd-badge-hot" :
+      repeatCount >= 3 ? "sd-badge sev-high" :
+      repeatCount >= 2 ? "sd-badge sd-badge-recurring" :
+      "sd-badge";
+
+    const repeatBadge = `
+      <span class="${repeatBadgeClass}">
+        ${repeatCount > 1 ? `Recurring x${repeatCount}` : "First seen"}
+      </span>
+    `;
+
+    const freshnessDot = fresh ? `<span class="fresh-dot"></span>` : "";
+
+    return `
+      <div class="sd-card incident-card ${pressure}">
+        <div class="sd-card-header">
+          <div>
+            <div class="sd-eyebrow">
+              Incident #${incident.id} ${freshnessDot}
+            </div>
+            <div class="sd-title">
+              ${incident.type} · ${incident.user}
+            </div>
+          </div>
+
+          <div class="sd-badge-row">
+            <span class="sd-badge ${severityClass(incident.severity)}">
+              ${incident.severity.toUpperCase()}
+            </span>
+
+            <span class="sd-badge sd-badge-action">
+              ${actionLabel(incident.action)}
+            </span>
+
+            ${repeatBadge}
+          </div>
+        </div>
+
+        <div class="sd-meta-row">
+          <div><strong>Risk:</strong> ${incident.riskScore}</div>
+          <div><strong>Status:</strong> ${incident.status}</div>
+          <div><strong>SLA:</strong> ${incident.sla}</div>
+          <div><strong>Repeats:</strong> ${repeatCount}</div>
+        </div>
+
+        <div class="sd-meta-row">
+          <div><strong>Created:</strong> ${timeAgo(incident.createdAt)}</div>
+          <div><strong>Updated:</strong> ${timeAgo(incident.updatedAt)}</div>
+          <div><strong>Last seen:</strong> ${timeAgo(incident.lastSeenAt)}</div>
+        </div>
+
+        <div class="sd-pressure ${pressure !== "normal" ? "sd-pressure-hot" : ""}">
+          ${repeatCount > 1 ? `Pattern repeating (${repeatCount}x)` : "Single occurrence"}
+        </div>
+
+        <div class="sd-chip-row">
+          ${(incident.reasonCodes || [])
+            .map(r => `<span class="sd-chip">${r}</span>`)
+            .join("")}
+        </div>
+
+        ${renderTimeline(incident)}
+        ${renderCaseHistory(incident)}
+      </div>
+    `;
+  }).join("");
+};
+
+
+// =======================
+// OPERATOR ACTIONS
+// =======================
+
+async function postJson(path, payload) {
+  const res = await fetch(`${apiBase}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload || {})
+  });
+
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const data = await res.json();
+      if (data?.error) message = data.error;
+    } catch (_) {}
+    throw new Error(message);
+  }
+
+  return res.json();
+}
+
+function getOperatorValue(incidentId) {
+  const el = document.getElementById(`operator-input-${incidentId}`);
+  return (el?.value || "").trim();
+}
+
+async function assignIncident(incidentId) {
+  try {
+    const assignedTo = getOperatorValue(incidentId) || "Robert";
+    await postJson(`/api/incidents/${incidentId}/assign`, { assignedTo });
+    await refreshAll();
+  } catch (error) {
+    console.error("assignIncident failed", error);
+    alert(`Assign failed: ${error.message}`);
+  }
+}
+
+async function acknowledgeIncident(incidentId) {
+  try {
+    const operator = getOperatorValue(incidentId) || "Robert";
+    await postJson(`/api/incidents/${incidentId}/acknowledge`, {
+      operator,
+      note: "Acknowledged from UI"
+    });
+    await refreshAll();
+  } catch (error) {
+    console.error("acknowledgeIncident failed", error);
+    alert(`Acknowledge failed: ${error.message}`);
+  }
+}
+
+async function resolveIncident(incidentId) {
+  try {
+    const operator = getOperatorValue(incidentId) || "Robert";
+    await postJson(`/api/incidents/${incidentId}/resolve`, {
+      operator,
+      resolution: "Resolved from UI"
+    });
+    await refreshAll();
+  } catch (error) {
+    console.error("resolveIncident failed", error);
+    alert(`Resolve failed: ${error.message}`);
+  }
+}
+
+(function injectOperatorStyles() {
+  if (document.getElementById("sd-operator-styles")) return;
+
+  const style = document.createElement("style");
+  style.id = "sd-operator-styles";
+  style.textContent = `
+    .sd-operator-bar {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      display: grid;
+      gap: 8px;
+    }
+
+    .sd-operator-row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    .sd-operator-input {
+      width: 100%;
+      min-width: 0;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: #eaf2ff;
+      border-radius: 10px;
+      padding: 9px 10px;
+      font-size: 12px;
+      outline: none;
+    }
+
+    .sd-operator-input::placeholder {
+      color: rgba(234,242,255,0.45);
+    }
+
+    .sd-operator-actions {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .sd-btn {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.06);
+      color: #eef4ff;
+      border-radius: 10px;
+      padding: 9px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+    }
+
+    .sd-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(0,0,0,0.18);
+    }
+
+    .sd-btn-assign {
+      background: rgba(120,160,255,0.14);
+      border-color: rgba(120,160,255,0.28);
+    }
+
+    .sd-btn-ack {
+      background: rgba(255,190,80,0.14);
+      border-color: rgba(255,190,80,0.28);
+    }
+
+    .sd-btn-resolve {
+      background: rgba(60,210,140,0.14);
+      border-color: rgba(60,210,140,0.28);
+    }
+
+    .sd-operator-meta {
+      margin-top: 6px;
+      font-size: 11px;
+      opacity: 0.75;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+// =======================
+// PATCH renderIncidents WITH OPERATOR BUTTONS
+// =======================
+
+renderIncidents = function(items = []) {
+  if (!incidentList) return;
+
+  if (!items.length) {
+    incidentList.innerHTML = `
+      <div class="sd-empty">
+        <div class="sd-empty-title">No incidents yet</div>
+        <div class="sd-empty-sub">The watch floor is quiet. Enjoy it while it lasts.</div>
+      </div>
+    `;
+    return;
+  }
+
+  incidentList.innerHTML = items.map((incident) => {
+    const repeatCount = incident.repeatCount || 1;
+    const pressure = getPressureLevel(incident);
+    const fresh = isFresh(incident.lastSeenAt);
+
+    const repeatBadgeClass =
+      repeatCount >= 5 ? "sd-badge sd-badge-hot" :
+      repeatCount >= 3 ? "sd-badge sev-high" :
+      repeatCount >= 2 ? "sd-badge sd-badge-recurring" :
+      "sd-badge";
+
+    const repeatBadge = `
+      <span class="${repeatBadgeClass}">
+        ${repeatCount > 1 ? `Recurring x${repeatCount}` : "First seen"}
+      </span>
+    `;
+
+    const freshnessDot = fresh ? `<span class="fresh-dot"></span>` : "";
+
+    return `
+      <div class="sd-card incident-card ${pressure}">
+        <div class="sd-card-header">
+          <div>
+            <div class="sd-eyebrow">
+              Incident #${incident.id} ${freshnessDot}
+            </div>
+            <div class="sd-title">
+              ${escapeHtml(incident.type)} · ${escapeHtml(incident.user)}
+            </div>
+          </div>
+
+          <div class="sd-badge-row">
+            <span class="sd-badge ${severityClass(incident.severity)}">
+              ${escapeHtml((incident.severity || "low").toUpperCase())}
+            </span>
+
+            <span class="sd-badge sd-badge-action">
+              ${escapeHtml(actionLabel(incident.action))}
+            </span>
+
+            ${repeatBadge}
+          </div>
+        </div>
+
+        <div class="sd-meta-row">
+          <div><strong>Risk:</strong> ${incident.riskScore}</div>
+          <div><strong>Status:</strong> ${escapeHtml(incident.status)}</div>
+          <div><strong>SLA:</strong> ${escapeHtml(incident.sla)}</div>
+          <div><strong>Repeats:</strong> ${repeatCount}</div>
+        </div>
+
+        <div class="sd-meta-row">
+          <div><strong>Created:</strong> ${timeAgo(incident.createdAt)}</div>
+          <div><strong>Updated:</strong> ${timeAgo(incident.updatedAt)}</div>
+          <div><strong>Last seen:</strong> ${timeAgo(incident.lastSeenAt)}</div>
+          <div><strong>Assigned:</strong> ${escapeHtml(incident.assignedTo || "unassigned")}</div>
+        </div>
+
+        <div class="sd-pressure ${pressure !== "normal" ? "sd-pressure-hot" : ""}">
+          ${repeatCount > 1 ? `Pattern repeating (${repeatCount}x)` : "Single occurrence"}
+        </div>
+
+        <div class="sd-chip-row">
+          ${(incident.reasonCodes || [])
+            .map(r => `<span class="sd-chip">${escapeHtml(r)}</span>`)
+            .join("")}
+        </div>
+
+        ${renderTimeline(incident)}
+        ${renderCaseHistory(incident)}
+
+        <div class="sd-operator-bar">
+          <div class="sd-operator-row">
+            <input
+              id="operator-input-${incident.id}"
+              class="sd-operator-input"
+              type="text"
+              placeholder="Operator name"
+              value="${escapeHtml(incident.assignedTo || incident.lastOperator || "Robert")}"
+            />
+          </div>
+
+          <div class="sd-operator-actions">
+            <button class="sd-btn sd-btn-assign" onclick="assignIncident(${incident.id})">Assign</button>
+            <button class="sd-btn sd-btn-ack" onclick="acknowledgeIncident(${incident.id})">Acknowledge</button>
+            <button class="sd-btn sd-btn-resolve" onclick="resolveIncident(${incident.id})">Resolve</button>
+          </div>
+
+          <div class="sd-operator-meta">
+            <span><strong>Last operator:</strong> ${escapeHtml(incident.lastOperator || "none")}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+};
+
+window.assignIncident = assignIncident;
+window.acknowledgeIncident = acknowledgeIncident;
+window.resolveIncident = resolveIncident;
+
+
+// =======================
+// OPERATOR ACTIONS
+// =======================
+
+async function postJson(path, payload) {
+  const res = await fetch(`${apiBase}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload || {})
+  });
+
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const data = await res.json();
+      if (data?.error) message = data.error;
+    } catch (_) {}
+    throw new Error(message);
+  }
+
+  return res.json();
+}
+
+function getOperatorValue(incidentId) {
+  const el = document.getElementById(`operator-input-${incidentId}`);
+  return (el?.value || "").trim();
+}
+
+async function assignIncident(incidentId) {
+  try {
+    const assignedTo = getOperatorValue(incidentId) || "Robert";
+    await postJson(`/api/incidents/${incidentId}/assign`, { assignedTo });
+    await refreshAll();
+  } catch (error) {
+    console.error("assignIncident failed", error);
+    alert(`Assign failed: ${error.message}`);
+  }
+}
+
+async function acknowledgeIncident(incidentId) {
+  try {
+    const operator = getOperatorValue(incidentId) || "Robert";
+    await postJson(`/api/incidents/${incidentId}/acknowledge`, {
+      operator,
+      note: "Acknowledged from UI"
+    });
+    await refreshAll();
+  } catch (error) {
+    console.error("acknowledgeIncident failed", error);
+    alert(`Acknowledge failed: ${error.message}`);
+  }
+}
+
+async function resolveIncident(incidentId) {
+  try {
+    const operator = getOperatorValue(incidentId) || "Robert";
+    await postJson(`/api/incidents/${incidentId}/resolve`, {
+      operator,
+      resolution: "Resolved from UI"
+    });
+    await refreshAll();
+  } catch (error) {
+    console.error("resolveIncident failed", error);
+    alert(`Resolve failed: ${error.message}`);
+  }
+}
+
+(function injectOperatorStyles() {
+  if (document.getElementById("sd-operator-styles")) return;
+
+  const style = document.createElement("style");
+  style.id = "sd-operator-styles";
+  style.textContent = `
+    .sd-operator-bar {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      display: grid;
+      gap: 8px;
+    }
+
+    .sd-operator-row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    .sd-operator-input {
+      width: 100%;
+      min-width: 0;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: #eaf2ff;
+      border-radius: 10px;
+      padding: 9px 10px;
+      font-size: 12px;
+      outline: none;
+    }
+
+    .sd-operator-input::placeholder {
+      color: rgba(234,242,255,0.45);
+    }
+
+    .sd-operator-actions {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .sd-btn {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.06);
+      color: #eef4ff;
+      border-radius: 10px;
+      padding: 9px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+    }
+
+    .sd-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(0,0,0,0.18);
+    }
+
+    .sd-btn-assign {
+      background: rgba(120,160,255,0.14);
+      border-color: rgba(120,160,255,0.28);
+    }
+
+    .sd-btn-ack {
+      background: rgba(255,190,80,0.14);
+      border-color: rgba(255,190,80,0.28);
+    }
+
+    .sd-btn-resolve {
+      background: rgba(60,210,140,0.14);
+      border-color: rgba(60,210,140,0.28);
+    }
+
+    .sd-operator-meta {
+      margin-top: 6px;
+      font-size: 11px;
+      opacity: 0.75;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+// =======================
+// PATCH renderIncidents WITH OPERATOR BUTTONS
+// =======================
+
+renderIncidents = function(items = []) {
+  if (!incidentList) return;
+
+  if (!items.length) {
+    incidentList.innerHTML = `
+      <div class="sd-empty">
+        <div class="sd-empty-title">No incidents yet</div>
+        <div class="sd-empty-sub">The watch floor is quiet. Enjoy it while it lasts.</div>
+      </div>
+    `;
+    return;
+  }
+
+  incidentList.innerHTML = items.map((incident) => {
+    const repeatCount = incident.repeatCount || 1;
+    const pressure = getPressureLevel(incident);
+    const fresh = isFresh(incident.lastSeenAt);
+
+    const repeatBadgeClass =
+      repeatCount >= 5 ? "sd-badge sd-badge-hot" :
+      repeatCount >= 3 ? "sd-badge sev-high" :
+      repeatCount >= 2 ? "sd-badge sd-badge-recurring" :
+      "sd-badge";
+
+    const repeatBadge = `
+      <span class="${repeatBadgeClass}">
+        ${repeatCount > 1 ? `Recurring x${repeatCount}` : "First seen"}
+      </span>
+    `;
+
+    const freshnessDot = fresh ? `<span class="fresh-dot"></span>` : "";
+
+    return `
+      <div class="sd-card incident-card ${pressure}">
+        <div class="sd-card-header">
+          <div>
+            <div class="sd-eyebrow">
+              Incident #${incident.id} ${freshnessDot}
+            </div>
+            <div class="sd-title">
+              ${escapeHtml(incident.type)} · ${escapeHtml(incident.user)}
+            </div>
+          </div>
+
+          <div class="sd-badge-row">
+            <span class="sd-badge ${severityClass(incident.severity)}">
+              ${escapeHtml((incident.severity || "low").toUpperCase())}
+            </span>
+
+            <span class="sd-badge sd-badge-action">
+              ${escapeHtml(actionLabel(incident.action))}
+            </span>
+
+            ${repeatBadge}
+          </div>
+        </div>
+
+        <div class="sd-meta-row">
+          <div><strong>Risk:</strong> ${incident.riskScore}</div>
+          <div><strong>Status:</strong> ${escapeHtml(incident.status)}</div>
+          <div><strong>SLA:</strong> ${escapeHtml(incident.sla)}</div>
+          <div><strong>Repeats:</strong> ${repeatCount}</div>
+        </div>
+
+        <div class="sd-meta-row">
+          <div><strong>Created:</strong> ${timeAgo(incident.createdAt)}</div>
+          <div><strong>Updated:</strong> ${timeAgo(incident.updatedAt)}</div>
+          <div><strong>Last seen:</strong> ${timeAgo(incident.lastSeenAt)}</div>
+          <div><strong>Assigned:</strong> ${escapeHtml(incident.assignedTo || "unassigned")}</div>
+        </div>
+
+        <div class="sd-pressure ${pressure !== "normal" ? "sd-pressure-hot" : ""}">
+          ${repeatCount > 1 ? `Pattern repeating (${repeatCount}x)` : "Single occurrence"}
+        </div>
+
+        <div class="sd-chip-row">
+          ${(incident.reasonCodes || [])
+            .map(r => `<span class="sd-chip">${escapeHtml(r)}</span>`)
+            .join("")}
+        </div>
+
+        ${renderTimeline(incident)}
+        ${renderCaseHistory(incident)}
+
+        <div class="sd-operator-bar">
+          <div class="sd-operator-row">
+            <input
+              id="operator-input-${incident.id}"
+              class="sd-operator-input"
+              type="text"
+              placeholder="Operator name"
+              value="${escapeHtml(incident.assignedTo || incident.lastOperator || "Robert")}"
+            />
+          </div>
+
+          <div class="sd-operator-actions">
+            <button class="sd-btn sd-btn-assign" onclick="assignIncident(${incident.id})">Assign</button>
+            <button class="sd-btn sd-btn-ack" onclick="acknowledgeIncident(${incident.id})">Acknowledge</button>
+            <button class="sd-btn sd-btn-resolve" onclick="resolveIncident(${incident.id})">Resolve</button>
+          </div>
+
+          <div class="sd-operator-meta">
+            <span><strong>Last operator:</strong> ${escapeHtml(incident.lastOperator || "none")}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+};
+
+window.assignIncident = assignIncident;
+window.acknowledgeIncident = acknowledgeIncident;
+window.resolveIncident = resolveIncident;
+
+
+// =======================
+// STATUS-SMART BUTTON LOGIC
+// =======================
+
+(function injectSmartButtonStyles() {
+  if (document.getElementById("sd-smart-button-styles")) return;
+
+  const style = document.createElement("style");
+  style.id = "sd-smart-button-styles";
+  style.textContent = `
+    .sd-btn[disabled] {
+      opacity: 0.38;
+      cursor: not-allowed;
+      transform: none !important;
+      box-shadow: none !important;
+      filter: grayscale(0.2);
+    }
+
+    .sd-btn[disabled]:hover {
+      transform: none !important;
+      box-shadow: none !important;
+    }
+
+    .sd-status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .sd-status-pill.pending_review {
+      background: rgba(255,255,255,0.07);
+    }
+
+    .sd-status-pill.acknowledged {
+      background: rgba(255,190,80,0.16);
+      border-color: rgba(255,190,80,0.28);
+    }
+
+    .sd-status-pill.resolved {
+      background: rgba(60,210,140,0.16);
+      border-color: rgba(60,210,140,0.30);
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+function normalizeOperatorName(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getButtonState(incident) {
+  const status = String(incident.status || "pending_review");
+  const inputValue = getOperatorValue(incident.id) || incident.assignedTo || incident.lastOperator || "Robert";
+
+  const assignedToSameOperator =
+    incident.assignedTo &&
+    normalizeOperatorName(incident.assignedTo) === normalizeOperatorName(inputValue);
+
+  const assignDisabled = status === "resolved" || !!assignedToSameOperator;
+  const ackDisabled = status === "acknowledged" || status === "resolved";
+  const resolveDisabled = status === "resolved";
+
+  const assignLabel =
+    status === "resolved"
+      ? "Assigned"
+      : assignedToSameOperator
+      ? "Assigned"
+      : "Assign";
+
+  const ackLabel =
+    status === "resolved"
+      ? "Acknowledged"
+      : status === "acknowledged"
+      ? "Acknowledged"
+      : "Acknowledge";
+
+  const resolveLabel =
+    status === "resolved"
+      ? "Resolved"
+      : "Resolve";
+
+  return {
+    assignDisabled,
+    ackDisabled,
+    resolveDisabled,
+    assignLabel,
+    ackLabel,
+    resolveLabel
+  };
+}
+
+// =======================
+// PATCH renderIncidents WITH SMART BUTTONS
+// =======================
+
+renderIncidents = function(items = []) {
+  if (!incidentList) return;
+
+  if (!items.length) {
+    incidentList.innerHTML = `
+      <div class="sd-empty">
+        <div class="sd-empty-title">No incidents yet</div>
+        <div class="sd-empty-sub">The watch floor is quiet. Enjoy it while it lasts.</div>
+      </div>
+    `;
+    return;
+  }
+
+  incidentList.innerHTML = items.map((incident) => {
+    const repeatCount = incident.repeatCount || 1;
+    const pressure = getPressureLevel(incident);
+    const fresh = isFresh(incident.lastSeenAt);
+    const status = escapeHtml(incident.status || "pending_review");
+    const buttonState = getButtonState(incident);
+
+    const repeatBadgeClass =
+      repeatCount >= 5 ? "sd-badge sd-badge-hot" :
+      repeatCount >= 3 ? "sd-badge sev-high" :
+      repeatCount >= 2 ? "sd-badge sd-badge-recurring" :
+      "sd-badge";
+
+    const repeatBadge = `
+      <span class="${repeatBadgeClass}">
+        ${repeatCount > 1 ? `Recurring x${repeatCount}` : "First seen"}
+      </span>
+    `;
+
+    const freshnessDot = fresh ? `<span class="fresh-dot"></span>` : "";
+
+    return `
+      <div class="sd-card incident-card ${pressure}">
+        <div class="sd-card-header">
+          <div>
+            <div class="sd-eyebrow">
+              Incident #${incident.id} ${freshnessDot}
+            </div>
+            <div class="sd-title">
+              ${escapeHtml(incident.type)} · ${escapeHtml(incident.user)}
+            </div>
+          </div>
+
+          <div class="sd-badge-row">
+            <span class="sd-badge ${severityClass(incident.severity)}">
+              ${escapeHtml((incident.severity || "low").toUpperCase())}
+            </span>
+
+            <span class="sd-badge sd-badge-action">
+              ${escapeHtml(actionLabel(incident.action))}
+            </span>
+
+            ${repeatBadge}
+          </div>
+        </div>
+
+        <div class="sd-meta-row">
+          <div><strong>Risk:</strong> ${incident.riskScore}</div>
+          <div><strong>Status:</strong> <span class="sd-status-pill ${status}">${status}</span></div>
+          <div><strong>SLA:</strong> ${escapeHtml(incident.sla)}</div>
+          <div><strong>Repeats:</strong> ${repeatCount}</div>
+        </div>
+
+        <div class="sd-meta-row">
+          <div><strong>Created:</strong> ${timeAgo(incident.createdAt)}</div>
+          <div><strong>Updated:</strong> ${timeAgo(incident.updatedAt)}</div>
+          <div><strong>Last seen:</strong> ${timeAgo(incident.lastSeenAt)}</div>
+          <div><strong>Assigned:</strong> ${escapeHtml(incident.assignedTo || "unassigned")}</div>
+        </div>
+
+        <div class="sd-pressure ${pressure !== "normal" ? "sd-pressure-hot" : ""}">
+          ${repeatCount > 1 ? `Pattern repeating (${repeatCount}x)` : "Single occurrence"}
+        </div>
+
+        <div class="sd-chip-row">
+          ${(incident.reasonCodes || [])
+            .map(r => `<span class="sd-chip">${escapeHtml(r)}</span>`)
+            .join("")}
+        </div>
+
+        ${renderTimeline(incident)}
+        ${renderCaseHistory(incident)}
+
+        <div class="sd-operator-bar">
+          <div class="sd-operator-row">
+            <input
+              id="operator-input-${incident.id}"
+              class="sd-operator-input"
+              type="text"
+              placeholder="Operator name"
+              value="${escapeHtml(incident.assignedTo || incident.lastOperator || "Robert")}"
+            />
+          </div>
+
+          <div class="sd-operator-actions">
+            <button
+              class="sd-btn sd-btn-assign"
+              onclick="assignIncident(${incident.id})"
+              ${buttonState.assignDisabled ? "disabled" : ""}
+            >
+              ${buttonState.assignLabel}
+            </button>
+
+            <button
+              class="sd-btn sd-btn-ack"
+              onclick="acknowledgeIncident(${incident.id})"
+              ${buttonState.ackDisabled ? "disabled" : ""}
+            >
+              ${buttonState.ackLabel}
+            </button>
+
+            <button
+              class="sd-btn sd-btn-resolve"
+              onclick="resolveIncident(${incident.id})"
+              ${buttonState.resolveDisabled ? "disabled" : ""}
+            >
+              ${buttonState.resolveLabel}
+            </button>
+          </div>
+
+          <div class="sd-operator-meta">
+            <span><strong>Last operator:</strong> ${escapeHtml(incident.lastOperator || "none")}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+};
+
+
+// =======================
+// OPERATOR FEEDBACK / TOAST-LITE
+// =======================
+
+const operatorFeedbackStore = new Map();
+
+function setOperatorFeedback(incidentId, message, type = "info") {
+  operatorFeedbackStore.set(String(incidentId), {
+    message,
+    type,
+    at: Date.now()
+  });
+
+  renderOperatorFeedback(incidentId);
+
+  setTimeout(() => {
+    const current = operatorFeedbackStore.get(String(incidentId));
+    if (current && Date.now() - current.at >= 3500) {
+      operatorFeedbackStore.delete(String(incidentId));
+      renderOperatorFeedback(incidentId);
+    }
+  }, 3600);
+}
+
+function getOperatorFeedback(incidentId) {
+  return operatorFeedbackStore.get(String(incidentId)) || null;
+}
+
+function renderOperatorFeedback(incidentId) {
+  const el = document.getElementById(`operator-feedback-${incidentId}`);
+  if (!el) return;
+
+  const feedback = getOperatorFeedback(incidentId);
+  if (!feedback) {
+    el.innerHTML = "";
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="sd-feedback sd-feedback-${feedback.type}">
+      ${escapeHtml(feedback.message)}
+    </div>
+  `;
+}
+
+(function injectOperatorFeedbackStyles() {
+  if (document.getElementById("sd-operator-feedback-styles")) return;
+
+  const style = document.createElement("style");
+  style.id = "sd-operator-feedback-styles";
+  style.textContent = `
+    .sd-feedback {
+      margin-top: 8px;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.05);
+    }
+
+    .sd-feedback-info {
+      background: rgba(120,160,255,0.12);
+      border-color: rgba(120,160,255,0.22);
+    }
+
+    .sd-feedback-success {
+      background: rgba(60,210,140,0.14);
+      border-color: rgba(60,210,140,0.28);
+    }
+
+    .sd-feedback-error {
+      background: rgba(255,90,90,0.14);
+      border-color: rgba(255,90,90,0.32);
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+// =======================
+// PATCH ACTION FUNCTIONS WITH FEEDBACK
+// =======================
+
+assignIncident = async function(incidentId) {
+  try {
+    const assignedTo = getOperatorValue(incidentId) || "Robert";
+    await postJson(`/api/incidents/${incidentId}/assign`, { assignedTo });
+    setOperatorFeedback(incidentId, `Assigned to ${assignedTo}.`, "success");
+    await refreshAll();
+  } catch (error) {
+    console.error("assignIncident failed", error);
+    setOperatorFeedback(incidentId, `Assign failed: ${error.message}`, "error");
+  }
+};
+
+acknowledgeIncident = async function(incidentId) {
+  try {
+    const operator = getOperatorValue(incidentId) || "Robert";
+    await postJson(`/api/incidents/${incidentId}/acknowledge`, {
+      operator,
+      note: "Acknowledged from UI"
+    });
+    setOperatorFeedback(incidentId, `Acknowledged by ${operator}.`, "success");
+    await refreshAll();
+  } catch (error) {
+    console.error("acknowledgeIncident failed", error);
+    setOperatorFeedback(incidentId, `Acknowledge failed: ${error.message}`, "error");
+  }
+};
+
+resolveIncident = async function(incidentId) {
+  try {
+    const operator = getOperatorValue(incidentId) || "Robert";
+    await postJson(`/api/incidents/${incidentId}/resolve`, {
+      operator,
+      resolution: "Resolved from UI"
+    });
+    setOperatorFeedback(incidentId, `Resolved by ${operator}.`, "success");
+    await refreshAll();
+  } catch (error) {
+    console.error("resolveIncident failed", error);
+    setOperatorFeedback(incidentId, `Resolve failed: ${error.message}`, "error");
+  }
+};
+
+window.assignIncident = assignIncident;
+window.acknowledgeIncident = acknowledgeIncident;
+window.resolveIncident = resolveIncident;
+
+// =======================
+// PATCH renderIncidents AGAIN FOR FEEDBACK SLOT
+// =======================
+
+renderIncidents = function(items = []) {
+  if (!incidentList) return;
+
+  if (!items.length) {
+    incidentList.innerHTML = `
+      <div class="sd-empty">
+        <div class="sd-empty-title">No incidents yet</div>
+        <div class="sd-empty-sub">The watch floor is quiet. Enjoy it while it lasts.</div>
+      </div>
+    `;
+    return;
+  }
+
+  incidentList.innerHTML = items.map((incident) => {
+    const repeatCount = incident.repeatCount || 1;
+    const pressure = getPressureLevel(incident);
+    const fresh = isFresh(incident.lastSeenAt);
+    const status = escapeHtml(incident.status || "pending_review");
+    const buttonState = getButtonState(incident);
+
+    const repeatBadgeClass =
+      repeatCount >= 5 ? "sd-badge sd-badge-hot" :
+      repeatCount >= 3 ? "sd-badge sev-high" :
+      repeatCount >= 2 ? "sd-badge sd-badge-recurring" :
+      "sd-badge";
+
+    const repeatBadge = `
+      <span class="${repeatBadgeClass}">
+        ${repeatCount > 1 ? `Recurring x${repeatCount}` : "First seen"}
+      </span>
+    `;
+
+    const freshnessDot = fresh ? `<span class="fresh-dot"></span>` : "";
+
+    return `
+      <div class="sd-card incident-card ${pressure}">
+        <div class="sd-card-header">
+          <div>
+            <div class="sd-eyebrow">
+              Incident #${incident.id} ${freshnessDot}
+            </div>
+            <div class="sd-title">
+              ${escapeHtml(incident.type)} · ${escapeHtml(incident.user)}
+            </div>
+          </div>
+
+          <div class="sd-badge-row">
+            <span class="sd-badge ${severityClass(incident.severity)}">
+              ${escapeHtml((incident.severity || "low").toUpperCase())}
+            </span>
+
+            <span class="sd-badge sd-badge-action">
+              ${escapeHtml(actionLabel(incident.action))}
+            </span>
+
+            ${repeatBadge}
+          </div>
+        </div>
+
+        <div class="sd-meta-row">
+          <div><strong>Risk:</strong> ${incident.riskScore}</div>
+          <div><strong>Status:</strong> <span class="sd-status-pill ${status}">${status}</span></div>
+          <div><strong>SLA:</strong> ${escapeHtml(incident.sla)}</div>
+          <div><strong>Repeats:</strong> ${repeatCount}</div>
+        </div>
+
+        <div class="sd-meta-row">
+          <div><strong>Created:</strong> ${timeAgo(incident.createdAt)}</div>
+          <div><strong>Updated:</strong> ${timeAgo(incident.updatedAt)}</div>
+          <div><strong>Last seen:</strong> ${timeAgo(incident.lastSeenAt)}</div>
+          <div><strong>Assigned:</strong> ${escapeHtml(incident.assignedTo || "unassigned")}</div>
+        </div>
+
+        <div class="sd-pressure ${pressure !== "normal" ? "sd-pressure-hot" : ""}">
+          ${repeatCount > 1 ? `Pattern repeating (${repeatCount}x)` : "Single occurrence"}
+        </div>
+
+        <div class="sd-chip-row">
+          ${(incident.reasonCodes || [])
+            .map(r => `<span class="sd-chip">${escapeHtml(r)}</span>`)
+            .join("")}
+        </div>
+
+        ${renderTimeline(incident)}
+        ${renderCaseHistory(incident)}
+
+        <div class="sd-operator-bar">
+          <div class="sd-operator-row">
+            <input
+              id="operator-input-${incident.id}"
+              class="sd-operator-input"
+              type="text"
+              placeholder="Operator name"
+              value="${escapeHtml(incident.assignedTo || incident.lastOperator || "Robert")}"
+            />
+          </div>
+
+          <div class="sd-operator-actions">
+            <button
+              class="sd-btn sd-btn-assign"
+              onclick="assignIncident(${incident.id})"
+              ${buttonState.assignDisabled ? "disabled" : ""}
+            >
+              ${buttonState.assignLabel}
+            </button>
+
+            <button
+              class="sd-btn sd-btn-ack"
+              onclick="acknowledgeIncident(${incident.id})"
+              ${buttonState.ackDisabled ? "disabled" : ""}
+            >
+              ${buttonState.ackLabel}
+            </button>
+
+            <button
+              class="sd-btn sd-btn-resolve"
+              onclick="resolveIncident(${incident.id})"
+              ${buttonState.resolveDisabled ? "disabled" : ""}
+            >
+              ${buttonState.resolveLabel}
+            </button>
+          </div>
+
+          <div class="sd-operator-meta">
+            <span><strong>Last operator:</strong> ${escapeHtml(incident.lastOperator || "none")}</span>
+          </div>
+
+          <div id="operator-feedback-${incident.id}"></div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  items.forEach((incident) => renderOperatorFeedback(incident.id));
+};
+
+
+// =======================
+// INCIDENT FILTERS
+// =======================
+
+const incidentFilterState = {
+  status: "all",
+  recurringOnly: false,
+  criticalOnly: false
+};
+
+(function injectFilterStyles() {
+  if (document.getElementById("sd-filter-styles")) return;
+
+  const style = document.createElement("style");
+  style.id = "sd-filter-styles";
+  style.textContent = `
+    .sd-filter-bar {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 14px;
+      padding: 12px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .sd-filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .sd-filter-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.68;
+      min-width: 54px;
+    }
+
+    .sd-filter-chip {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.05);
+      color: #eef4ff;
+      border-radius: 999px;
+      padding: 7px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .sd-filter-chip.active {
+      background: rgba(120,160,255,0.18);
+      border-color: rgba(120,160,255,0.32);
+    }
+
+    .sd-filter-toggle {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.05);
+      color: #eef4ff;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .sd-filter-toggle.active {
+      background: rgba(177,120,255,0.18);
+      border-color: rgba(177,120,255,0.34);
+    }
+
+    .sd-filter-summary {
+      font-size: 12px;
+      opacity: 0.76;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+function setIncidentStatusFilter(status) {
+  incidentFilterState.status = status;
+  refreshAll();
+}
+
+function toggleRecurringOnly() {
+  incidentFilterState.recurringOnly = !incidentFilterState.recurringOnly;
+  refreshAll();
+}
+
+function toggleCriticalOnly() {
+  incidentFilterState.criticalOnly = !incidentFilterState.criticalOnly;
+  refreshAll();
+}
+
+function applyIncidentFilters(items = []) {
+  return items.filter((incident) => {
+    const status = String(incident.status || "pending_review");
+    const repeatCount = incident.repeatCount || 1;
+    const severity = String(incident.severity || "low");
+
+    if (incidentFilterState.status !== "all" && status !== incidentFilterState.status) {
+      return false;
+    }
+
+    if (incidentFilterState.recurringOnly && repeatCount < 2) {
+      return false;
+    }
+
+    if (incidentFilterState.criticalOnly && severity !== "critical") {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function renderIncidentFilterBar(allItems = [], filteredItems = []) {
+  return `
+    <div class="sd-filter-bar">
+      <div class="sd-filter-row">
+        <div class="sd-filter-label">Status</div>
+
+        <button class="sd-filter-chip ${incidentFilterState.status === "all" ? "active" : ""}"
+          onclick="setIncidentStatusFilter('all')">All</button>
+
+        <button class="sd-filter-chip ${incidentFilterState.status === "pending_review" ? "active" : ""}"
+          onclick="setIncidentStatusFilter('pending_review')">Open</button>
+
+        <button class="sd-filter-chip ${incidentFilterState.status === "acknowledged" ? "active" : ""}"
+          onclick="setIncidentStatusFilter('acknowledged')">Acknowledged</button>
+
+        <button class="sd-filter-chip ${incidentFilterState.status === "resolved" ? "active" : ""}"
+          onclick="setIncidentStatusFilter('resolved')">Resolved</button>
+      </div>
+
+      <div class="sd-filter-row">
+        <button class="sd-filter-toggle ${incidentFilterState.recurringOnly ? "active" : ""}"
+          onclick="toggleRecurringOnly()">
+          Recurring only
+        </button>
+
+        <button class="sd-filter-toggle ${incidentFilterState.criticalOnly ? "active" : ""}"
+          onclick="toggleCriticalOnly()">
+          Critical only
+        </button>
+      </div>
+
+      <div class="sd-filter-summary">
+        Showing ${filteredItems.length} of ${allItems.length} incidents
+      </div>
+    </div>
+  `;
+}
+
+window.setIncidentStatusFilter = setIncidentStatusFilter;
+window.toggleRecurringOnly = toggleRecurringOnly;
+window.toggleCriticalOnly = toggleCriticalOnly;
+
+// =======================
+// PATCH renderIncidents WITH FILTERS
+// =======================
+
+renderIncidents = function(items = []) {
+  if (!incidentList) return;
+
+  const filteredItems = applyIncidentFilters(items);
+
+  if (!items.length) {
+    incidentList.innerHTML = `
+      ${renderIncidentFilterBar(items, filteredItems)}
+      <div class="sd-empty">
+        <div class="sd-empty-title">No incidents yet</div>
+        <div class="sd-empty-sub">The watch floor is quiet. Enjoy it while it lasts.</div>
+      </div>
+    `;
+    return;
+  }
+
+  if (!filteredItems.length) {
+    incidentList.innerHTML = `
+      ${renderIncidentFilterBar(items, filteredItems)}
+      <div class="sd-empty">
+        <div class="sd-empty-title">No incidents match the current filter</div>
+        <div class="sd-empty-sub">Try widening the net. Even old sea captains did not inspect the whole ocean through a keyhole.</div>
+      </div>
+    `;
+    return;
+  }
+
+  incidentList.innerHTML =
+    renderIncidentFilterBar(items, filteredItems) +
+    filteredItems.map((incident) => {
+      const repeatCount = incident.repeatCount || 1;
+      const pressure = getPressureLevel(incident);
+      const fresh = isFresh(incident.lastSeenAt);
+      const rawStatus = String(incident.status || "pending_review");
+      const status = escapeHtml(rawStatus);
+      const buttonState = getButtonState(incident);
+
+      const repeatBadgeClass =
+        repeatCount >= 5 ? "sd-badge sd-badge-hot" :
+        repeatCount >= 3 ? "sd-badge sev-high" :
+        repeatCount >= 2 ? "sd-badge sd-badge-recurring" :
+        "sd-badge";
+
+      const repeatBadge = `
+        <span class="${repeatBadgeClass}">
+          ${repeatCount > 1 ? `Recurring x${repeatCount}` : "First seen"}
+        </span>
+      `;
+
+      const freshnessDot = fresh ? `<span class="fresh-dot"></span>` : "";
+
+      return `
+        <div class="sd-card incident-card ${pressure}">
+          <div class="sd-card-header">
+            <div>
+              <div class="sd-eyebrow">
+                Incident #${incident.id} ${freshnessDot}
+              </div>
+              <div class="sd-title">
+                ${escapeHtml(incident.type)} · ${escapeHtml(incident.user)}
+              </div>
+            </div>
+
+            <div class="sd-badge-row">
+              <span class="sd-badge ${severityClass(incident.severity)}">
+                ${escapeHtml((incident.severity || "low").toUpperCase())}
+              </span>
+
+              <span class="sd-badge sd-badge-action">
+                ${escapeHtml(actionLabel(incident.action))}
+              </span>
+
+              ${repeatBadge}
+            </div>
+          </div>
+
+          <div class="sd-meta-row">
+            <div><strong>Risk:</strong> ${incident.riskScore}</div>
+            <div><strong>Status:</strong> <span class="sd-status-pill ${status}">${status}</span></div>
+            <div><strong>SLA:</strong> ${escapeHtml(incident.sla)}</div>
+            <div><strong>Repeats:</strong> ${repeatCount}</div>
+          </div>
+
+          <div class="sd-meta-row">
+            <div><strong>Created:</strong> ${timeAgo(incident.createdAt)}</div>
+            <div><strong>Updated:</strong> ${timeAgo(incident.updatedAt)}</div>
+            <div><strong>Last seen:</strong> ${timeAgo(incident.lastSeenAt)}</div>
+            <div><strong>Assigned:</strong> ${escapeHtml(incident.assignedTo || "unassigned")}</div>
+          </div>
+
+          <div class="sd-pressure ${pressure !== "normal" ? "sd-pressure-hot" : ""}">
+            ${repeatCount > 1 ? `Pattern repeating (${repeatCount}x)` : "Single occurrence"}
+          </div>
+
+          <div class="sd-chip-row">
+            ${(incident.reasonCodes || [])
+              .map(r => `<span class="sd-chip">${escapeHtml(r)}</span>`)
+              .join("")}
+          </div>
+
+          ${renderTimeline(incident)}
+          ${renderCaseHistory(incident)}
+
+          <div class="sd-operator-bar">
+            <div class="sd-operator-row">
+              <input
+                id="operator-input-${incident.id}"
+                class="sd-operator-input"
+                type="text"
+                placeholder="Operator name"
+                value="${escapeHtml(incident.assignedTo || incident.lastOperator || "Robert")}"
+              />
+            </div>
+
+            <div class="sd-operator-actions">
+              <button
+                class="sd-btn sd-btn-assign"
+                onclick="assignIncident(${incident.id})"
+                ${buttonState.assignDisabled ? "disabled" : ""}
+              >
+                ${buttonState.assignLabel}
+              </button>
+
+              <button
+                class="sd-btn sd-btn-ack"
+                onclick="acknowledgeIncident(${incident.id})"
+                ${buttonState.ackDisabled ? "disabled" : ""}
+              >
+                ${buttonState.ackLabel}
+              </button>
+
+              <button
+                class="sd-btn sd-btn-resolve"
+                onclick="resolveIncident(${incident.id})"
+                ${buttonState.resolveDisabled ? "disabled" : ""}
+              >
+                ${buttonState.resolveLabel}
+              </button>
+            </div>
+
+            <div class="sd-operator-meta">
+              <span><strong>Last operator:</strong> ${escapeHtml(incident.lastOperator || "none")}</span>
+            </div>
+
+            <div id="operator-feedback-${incident.id}"></div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+  filteredItems.forEach((incident) => renderOperatorFeedback(incident.id));
+};
+
+
+// =======================
+// INCIDENT SORTING
+// =======================
+
+incidentFilterState.sortBy = "updated";
+
+(function injectSortStyles() {
+  if (document.getElementById("sd-sort-styles")) return;
+
+  const style = document.createElement("style");
+  style.id = "sd-sort-styles";
+  style.textContent = `
+    .sd-sort-select {
+      appearance: none;
+      background: rgba(255,255,255,0.05);
+      color: #eef4ff;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      min-width: 170px;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+function setIncidentSort(sortBy) {
+  incidentFilterState.sortBy = sortBy;
+  refreshAll();
+}
+
+function sortIncidents(items = []) {
+  const arr = [...items];
+  const sortBy = incidentFilterState.sortBy || "updated";
+
+  if (sortBy === "risk") {
+    arr.sort((a, b) => (b.riskScore || 0) - (a.riskScore || 0));
+    return arr;
+  }
+
+  if (sortBy === "repeats") {
+    arr.sort((a, b) => {
+      const repeatDiff = (b.repeatCount || 1) - (a.repeatCount || 1);
+      if (repeatDiff !== 0) return repeatDiff;
+      return new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime();
+    });
+    return arr;
+  }
+
+  // default: updated
+  arr.sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+  return arr;
+}
+
+window.setIncidentSort = setIncidentSort;
+
+// =======================
+// PATCH renderIncidentFilterBar WITH SORT
+// =======================
+
+renderIncidentFilterBar = function(allItems = [], filteredItems = []) {
+  return `
+    <div class="sd-filter-bar">
+      <div class="sd-filter-row">
+        <div class="sd-filter-label">Status</div>
+
+        <button class="sd-filter-chip ${incidentFilterState.status === "all" ? "active" : ""}"
+          onclick="setIncidentStatusFilter('all')">All</button>
+
+        <button class="sd-filter-chip ${incidentFilterState.status === "pending_review" ? "active" : ""}"
+          onclick="setIncidentStatusFilter('pending_review')">Open</button>
+
+        <button class="sd-filter-chip ${incidentFilterState.status === "acknowledged" ? "active" : ""}"
+          onclick="setIncidentStatusFilter('acknowledged')">Acknowledged</button>
+
+        <button class="sd-filter-chip ${incidentFilterState.status === "resolved" ? "active" : ""}"
+          onclick="setIncidentStatusFilter('resolved')">Resolved</button>
+      </div>
+
+      <div class="sd-filter-row">
+        <button class="sd-filter-toggle ${incidentFilterState.recurringOnly ? "active" : ""}"
+          onclick="toggleRecurringOnly()">
+          Recurring only
+        </button>
+
+        <button class="sd-filter-toggle ${incidentFilterState.criticalOnly ? "active" : ""}"
+          onclick="toggleCriticalOnly()">
+          Critical only
+        </button>
+      </div>
+
+      <div class="sd-filter-row">
+        <div class="sd-filter-label">Sort</div>
+        <select class="sd-sort-select" onchange="setIncidentSort(this.value)">
+          <option value="updated" ${incidentFilterState.sortBy === "updated" ? "selected" : ""}>Newest updated</option>
+          <option value="risk" ${incidentFilterState.sortBy === "risk" ? "selected" : ""}>Highest risk</option>
+          <option value="repeats" ${incidentFilterState.sortBy === "repeats" ? "selected" : ""}>Most repeats</option>
+        </select>
+      </div>
+
+      <div class="sd-filter-summary">
+        Showing ${filteredItems.length} of ${allItems.length} incidents
+      </div>
+    </div>
+  `;
+};
+
+// =======================
+// PATCH renderIncidents WITH SORTED ITEMS
+// =======================
+
+renderIncidents = function(items = []) {
+  if (!incidentList) return;
+
+  const filteredItems = applyIncidentFilters(items);
+  const visibleItems = sortIncidents(filteredItems);
+
+  if (!items.length) {
+    incidentList.innerHTML = `
+      ${renderIncidentFilterBar(items, visibleItems)}
+      <div class="sd-empty">
+        <div class="sd-empty-title">No incidents yet</div>
+        <div class="sd-empty-sub">The watch floor is quiet. Enjoy it while it lasts.</div>
+      </div>
+    `;
+    return;
+  }
+
+  if (!visibleItems.length) {
+    incidentList.innerHTML = `
+      ${renderIncidentFilterBar(items, visibleItems)}
+      <div class="sd-empty">
+        <div class="sd-empty-title">No incidents match the current filter</div>
+        <div class="sd-empty-sub">Try widening the net. Even old sea captains did not inspect the whole ocean through a keyhole.</div>
+      </div>
+    `;
+    return;
+  }
+
+  incidentList.innerHTML =
+    renderIncidentFilterBar(items, visibleItems) +
+    visibleItems.map((incident) => {
+      const repeatCount = incident.repeatCount || 1;
+      const pressure = getPressureLevel(incident);
+      const fresh = isFresh(incident.lastSeenAt);
+      const rawStatus = String(incident.status || "pending_review");
+      const status = escapeHtml(rawStatus);
+      const buttonState = getButtonState(incident);
+
+      const repeatBadgeClass =
+        repeatCount >= 5 ? "sd-badge sd-badge-hot" :
+        repeatCount >= 3 ? "sd-badge sev-high" :
+        repeatCount >= 2 ? "sd-badge sd-badge-recurring" :
+        "sd-badge";
+
+      const repeatBadge = `
+        <span class="${repeatBadgeClass}">
+          ${repeatCount > 1 ? `Recurring x${repeatCount}` : "First seen"}
+        </span>
+      `;
+
+      const freshnessDot = fresh ? `<span class="fresh-dot"></span>` : "";
+
+      return `
+        <div class="sd-card incident-card ${pressure}">
+          <div class="sd-card-header">
+            <div>
+              <div class="sd-eyebrow">
+                Incident #${incident.id} ${freshnessDot}
+              </div>
+              <div class="sd-title">
+                ${escapeHtml(incident.type)} · ${escapeHtml(incident.user)}
+              </div>
+            </div>
+
+            <div class="sd-badge-row">
+              <span class="sd-badge ${severityClass(incident.severity)}">
+                ${escapeHtml((incident.severity || "low").toUpperCase())}
+              </span>
+
+              <span class="sd-badge sd-badge-action">
+                ${escapeHtml(actionLabel(incident.action))}
+              </span>
+
+              ${repeatBadge}
+            </div>
+          </div>
+
+          <div class="sd-meta-row">
+            <div><strong>Risk:</strong> ${incident.riskScore}</div>
+            <div><strong>Status:</strong> <span class="sd-status-pill ${status}">${status}</span></div>
+            <div><strong>SLA:</strong> ${escapeHtml(incident.sla)}</div>
+            <div><strong>Repeats:</strong> ${repeatCount}</div>
+          </div>
+
+          <div class="sd-meta-row">
+            <div><strong>Created:</strong> ${timeAgo(incident.createdAt)}</div>
+            <div><strong>Updated:</strong> ${timeAgo(incident.updatedAt)}</div>
+            <div><strong>Last seen:</strong> ${timeAgo(incident.lastSeenAt)}</div>
+            <div><strong>Assigned:</strong> ${escapeHtml(incident.assignedTo || "unassigned")}</div>
+          </div>
+
+          <div class="sd-pressure ${pressure !== "normal" ? "sd-pressure-hot" : ""}">
+            ${repeatCount > 1 ? `Pattern repeating (${repeatCount}x)` : "Single occurrence"}
+          </div>
+
+          <div class="sd-chip-row">
+            ${(incident.reasonCodes || [])
+              .map(r => `<span class="sd-chip">${escapeHtml(r)}</span>`)
+              .join("")}
+          </div>
+
+          ${renderTimeline(incident)}
+          ${renderCaseHistory(incident)}
+
+          <div class="sd-operator-bar">
+            <div class="sd-operator-row">
+              <input
+                id="operator-input-${incident.id}"
+                class="sd-operator-input"
+                type="text"
+                placeholder="Operator name"
+                value="${escapeHtml(incident.assignedTo || incident.lastOperator || "Robert")}"
+              />
+            </div>
+
+            <div class="sd-operator-actions">
+              <button
+                class="sd-btn sd-btn-assign"
+                onclick="assignIncident(${incident.id})"
+                ${buttonState.assignDisabled ? "disabled" : ""}
+              >
+                ${buttonState.assignLabel}
+              </button>
+
+              <button
+                class="sd-btn sd-btn-ack"
+                onclick="acknowledgeIncident(${incident.id})"
+                ${buttonState.ackDisabled ? "disabled" : ""}
+              >
+                ${buttonState.ackLabel}
+              </button>
+
+              <button
+                class="sd-btn sd-btn-resolve"
+                onclick="resolveIncident(${incident.id})"
+                ${buttonState.resolveDisabled ? "disabled" : ""}
+              >
+                ${buttonState.resolveLabel}
+              </button>
+            </div>
+
+            <div class="sd-operator-meta">
+              <span><strong>Last operator:</strong> ${escapeHtml(incident.lastOperator || "none")}</span>
+            </div>
+
+            <div id="operator-feedback-${incident.id}"></div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+  visibleItems.forEach((incident) => renderOperatorFeedback(incident.id));
+};
+
+
+// =======================
+// WIDE GRID INCIDENT LAYOUT
+// =======================
+
+(function injectWideGridStyles() {
+  if (document.getElementById("sd-wide-grid-styles")) return;
+
+  const style = document.createElement("style");
+  style.id = "sd-wide-grid-styles";
+  style.textContent = `
+    .sd-incident-shell {
+      width: 100%;
+      display: grid;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .sd-incident-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+      align-items: start;
+    }
+
+    @media (min-width: 1100px) {
+      .sd-incident-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (min-width: 1680px) {
+      .sd-incident-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+
+    .incident-card {
+      width: 100%;
+      min-width: 0;
+      align-self: start;
+    }
+
+    .sd-filter-bar {
+      position: sticky;
+      top: 8px;
+      z-index: 3;
+      backdrop-filter: blur(6px);
+    }
+
+    .sd-card,
+    .sd-meta-row,
+    .sd-chip-row,
+    .sd-operator-actions,
+    .sd-timeline-track,
+    .sd-timeline-meta,
+    .sd-history-list {
+      min-width: 0;
+    }
+
+    .sd-title,
+    .sd-history-text,
+    .sd-summary-text,
+    .sd-summary-rec,
+    .sd-note {
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    .sd-chip {
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+
+    .sd-operator-actions {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .sd-filter-row {
+      justify-content: flex-start;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+// =======================
+// PATCH renderIncidents FOR GRID LAYOUT
+// =======================
+
+renderIncidents = function(items = []) {
+  if (!incidentList) return;
+
+  const filteredItems = applyIncidentFilters(items);
+  const visibleItems = sortIncidents(filteredItems);
+
+  if (!items.length) {
+    incidentList.innerHTML = `
+      <div class="sd-incident-shell">
+        ${renderIncidentFilterBar(items, visibleItems)}
+        <div class="sd-empty">
+          <div class="sd-empty-title">No incidents yet</div>
+          <div class="sd-empty-sub">The watch floor is quiet. Enjoy it while it lasts.</div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  if (!visibleItems.length) {
+    incidentList.innerHTML = `
+      <div class="sd-incident-shell">
+        ${renderIncidentFilterBar(items, visibleItems)}
+        <div class="sd-empty">
+          <div class="sd-empty-title">No incidents match the current filter</div>
+          <div class="sd-empty-sub">Try widening the net. Even old sea captains did not inspect the whole ocean through a keyhole.</div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  incidentList.innerHTML = `
+    <div class="sd-incident-shell">
+      ${renderIncidentFilterBar(items, visibleItems)}
+      <div class="sd-incident-grid">
+        ${visibleItems.map((incident) => {
+          const repeatCount = incident.repeatCount || 1;
+          const pressure = getPressureLevel(incident);
+          const fresh = isFresh(incident.lastSeenAt);
+          const rawStatus = String(incident.status || "pending_review");
+          const status = escapeHtml(rawStatus);
+          const buttonState = getButtonState(incident);
+
+          const repeatBadgeClass =
+            repeatCount >= 5 ? "sd-badge sd-badge-hot" :
+            repeatCount >= 3 ? "sd-badge sev-high" :
+            repeatCount >= 2 ? "sd-badge sd-badge-recurring" :
+            "sd-badge";
+
+          const repeatBadge = `
+            <span class="${repeatBadgeClass}">
+              ${repeatCount > 1 ? `Recurring x${repeatCount}` : "First seen"}
+            </span>
+          `;
+
+          const freshnessDot = fresh ? `<span class="fresh-dot"></span>` : "";
+
+          return `
+            <div class="sd-card incident-card ${pressure}">
+              <div class="sd-card-header">
+                <div>
+                  <div class="sd-eyebrow">
+                    Incident #${incident.id} ${freshnessDot}
+                  </div>
+                  <div class="sd-title">
+                    ${escapeHtml(incident.type)} · ${escapeHtml(incident.user)}
+                  </div>
+                </div>
+
+                <div class="sd-badge-row">
+                  <span class="sd-badge ${severityClass(incident.severity)}">
+                    ${escapeHtml((incident.severity || "low").toUpperCase())}
+                  </span>
+
+                  <span class="sd-badge sd-badge-action">
+                    ${escapeHtml(actionLabel(incident.action))}
+                  </span>
+
+                  ${repeatBadge}
+                </div>
+              </div>
+
+              <div class="sd-meta-row">
+                <div><strong>Risk:</strong> ${incident.riskScore}</div>
+                <div><strong>Status:</strong> <span class="sd-status-pill ${status}">${status}</span></div>
+                <div><strong>SLA:</strong> ${escapeHtml(incident.sla)}</div>
+                <div><strong>Repeats:</strong> ${repeatCount}</div>
+              </div>
+
+              <div class="sd-meta-row">
+                <div><strong>Created:</strong> ${timeAgo(incident.createdAt)}</div>
+                <div><strong>Updated:</strong> ${timeAgo(incident.updatedAt)}</div>
+                <div><strong>Last seen:</strong> ${timeAgo(incident.lastSeenAt)}</div>
+                <div><strong>Assigned:</strong> ${escapeHtml(incident.assignedTo || "unassigned")}</div>
+              </div>
+
+              <div class="sd-pressure ${pressure !== "normal" ? "sd-pressure-hot" : ""}">
+                ${repeatCount > 1 ? `Pattern repeating (${repeatCount}x)` : "Single occurrence"}
+              </div>
+
+              <div class="sd-chip-row">
+                ${(incident.reasonCodes || [])
+                  .map(r => `<span class="sd-chip">${escapeHtml(r)}</span>`)
+                  .join("")}
+              </div>
+
+              ${renderTimeline(incident)}
+              ${renderCaseHistory(incident)}
+
+              <div class="sd-operator-bar">
+                <div class="sd-operator-row">
+                  <input
+                    id="operator-input-${incident.id}"
+                    class="sd-operator-input"
+                    type="text"
+                    placeholder="Operator name"
+                    value="${escapeHtml(incident.assignedTo || incident.lastOperator || "Robert")}"
+                  />
+                </div>
+
+                <div class="sd-operator-actions">
+                  <button
+                    class="sd-btn sd-btn-assign"
+                    onclick="assignIncident(${incident.id})"
+                    ${buttonState.assignDisabled ? "disabled" : ""}
+                  >
+                    ${buttonState.assignLabel}
+                  </button>
+
+                  <button
+                    class="sd-btn sd-btn-ack"
+                    onclick="acknowledgeIncident(${incident.id})"
+                    ${buttonState.ackDisabled ? "disabled" : ""}
+                  >
+                    ${buttonState.ackLabel}
+                  </button>
+
+                  <button
+                    class="sd-btn sd-btn-resolve"
+                    onclick="resolveIncident(${incident.id})"
+                    ${buttonState.resolveDisabled ? "disabled" : ""}
+                  >
+                    ${buttonState.resolveLabel}
+                  </button>
+                </div>
+
+                <div class="sd-operator-meta">
+                  <span><strong>Last operator:</strong> ${escapeHtml(incident.lastOperator || "none")}</span>
+                </div>
+
+                <div id="operator-feedback-${incident.id}"></div>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `;
+
+  visibleItems.forEach((incident) => renderOperatorFeedback(incident.id));
+};
+
+
+// =======================
+// MAKE THE MAIN DECISION AREA WIDER
+// =======================
+
+(function widenWarRoomColumns() {
+  if (document.getElementById("sd-widen-warroom-styles")) return;
+
+  const style = document.createElement("style");
+  style.id = "sd-widen-warroom-styles";
+  style.textContent = `
+    /* Försök få huvudytan att använda mer av mitten */
+    .decision-queue,
+    .decisionQueue,
+    #decisionQueue,
+    .queue-panel,
+    .main-panel,
+    .main-content,
+    .content-grid,
+    .dashboard-grid {
+      width: 100% !important;
+      max-width: none !important;
+    }
+
+    /* Om det finns en tvåkolumnslayout, ge mer plats åt mitten */
+    .layout,
+    .dashboard-layout,
+    .warroom-layout,
+    .main-grid {
+      width: 100% !important;
+      max-width: none !important;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+
+// =======================
+// CASE DETAIL PANEL
+// =======================
+
+let selectedIncidentId = null;
+let latestIncidentSnapshot = [];
+
+function selectIncident(incidentId) {
+  selectedIncidentId = Number(incidentId);
+  refreshAll();
+}
+
+window.selectIncident = selectIncident;
+
+(function injectCaseDetailStyles() {
+  if (document.getElementById("sd-case-detail-styles")) return;
+
+  const style = document.createElement("style");
+  style.id = "sd-case-detail-styles";
+  style.textContent = `
+    .sd-clickable {
+      cursor: pointer;
+      transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+    }
+
+    .sd-clickable:hover {
+      transform: translateY(-1px);
+    }
+
+    .sd-selected {
+      border-color: rgba(120,160,255,0.38) !important;
+      box-shadow: 0 0 0 1px rgba(120,160,255,0.18), 0 10px 26px rgba(0,0,0,0.22);
+    }
+
+    .sd-detail-wrap {
+      display: grid;
+      gap: 10px;
+    }
+
+    .sd-detail-title {
+      font-size: 15px;
+      font-weight: 800;
+      line-height: 1.25;
+      word-break: break-word;
+    }
+
+    .sd-detail-section {
+      padding-top: 10px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .sd-detail-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.64;
+      margin-bottom: 6px;
+    }
+
+    .sd-detail-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 6px;
+      font-size: 12px;
+    }
+
+    .sd-detail-chiprow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .sd-mini-history {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .sd-mini-history-item {
+      padding: 8px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+      font-size: 11px;
+    }
+
+    .sd-mini-history-time {
+      opacity: 0.65;
+      margin-bottom: 4px;
+      font-weight: 700;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+function getSelectedIncident(items = []) {
+  if (!items.length) return null;
+
+  const selected =
+    items.find((incident) => Number(incident.id) === Number(selectedIncidentId)) || null;
+
+  if (selected) return selected;
+
+  return items[0];
+}
+
+function renderCaseDetailPanel(allItems = []) {
+  const panel =
+    document.getElementById("caseDetail") ||
+    document.getElementById("case-detail") ||
+    document.getElementById("caseDetailPanel");
+
+  if (!panel) return;
+
+  const incident = getSelectedIncident(allItems);
+
+  if (!incident) {
+    panel.innerHTML = `
+      <div class="sd-empty">
+        <div class="sd-empty-title">No case selected</div>
+        <div class="sd-empty-sub">Choose an incident from the queue to inspect it here.</div>
+      </div>
+    `;
+    return;
+  }
+
+  const audit = Array.isArray(incident.auditTrail) ? incident.auditTrail.slice(0, 8) : [];
+
+  panel.innerHTML = `
+    <div class="sd-detail-wrap">
+      <div>
+        <div class="sd-eyebrow">Case Detail</div>
+        <div class="sd-detail-title">${escapeHtml(incident.type)} · ${escapeHtml(incident.user)}</div>
+      </div>
+
+      <div class="sd-badge-row">
+        <span class="sd-badge ${severityClass(incident.severity)}">${escapeHtml((incident.severity || "low").toUpperCase())}</span>
+        <span class="sd-badge sd-badge-action">${escapeHtml(actionLabel(incident.action))}</span>
+        <span class="sd-badge">${escapeHtml(incident.status || "pending_review")}</span>
+      </div>
+
+      <div class="sd-detail-section">
+        <div class="sd-detail-label">Case facts</div>
+        <div class="sd-detail-grid">
+          <div><strong>ID:</strong> ${incident.id}</div>
+          <div><strong>Risk:</strong> ${incident.riskScore}</div>
+          <div><strong>Repeats:</strong> ${incident.repeatCount || 1}</div>
+          <div><strong>SLA:</strong> ${escapeHtml(incident.sla || "-")}</div>
+          <div><strong>Assigned:</strong> ${escapeHtml(incident.assignedTo || "unassigned")}</div>
+          <div><strong>Last operator:</strong> ${escapeHtml(incident.lastOperator || "none")}</div>
+          <div><strong>Created:</strong> ${timeAgo(incident.createdAt)}</div>
+          <div><strong>Updated:</strong> ${timeAgo(incident.updatedAt)}</div>
+          <div><strong>Last seen:</strong> ${timeAgo(incident.lastSeenAt)}</div>
+        </div>
+      </div>
+
+      <div class="sd-detail-section">
+        <div class="sd-detail-label">Reason codes</div>
+        <div class="sd-detail-chiprow">
+          ${(incident.reasonCodes || []).map(code => `<span class="sd-chip">${escapeHtml(code)}</span>`).join("") || `<span class="sd-chip">No reason codes</span>`}
+        </div>
+      </div>
+
+      ${
+        incident.correlationLabel && incident.correlationLabel !== "none"
+          ? `
+      <div class="sd-detail-section">
+        <div class="sd-detail-label">Correlation</div>
+        <div>${escapeHtml(incident.correlationLabel)}</div>
+      </div>`
+          : ""
+      }
+
+      ${
+        incident.trendLabel && incident.trendLabel !== "normal"
+          ? `
+      <div class="sd-detail-section">
+        <div class="sd-detail-label">Trend</div>
+        <div>${escapeHtml(incident.trendLabel)}</div>
+      </div>`
+          : ""
+      }
+
+      <div class="sd-detail-section">
+        <div class="sd-detail-label">Recent audit trail</div>
+        <div class="sd-mini-history">
+          ${
+            audit.length
+              ? audit
+                  .map((entry) => {
+                    const mapped = mapAuditTypeToText(entry, incident);
+                    return `
+                      <div class="sd-mini-history-item">
+                        <div class="sd-mini-history-time">${timeAgo(entry.at)}</div>
+                        <div>${escapeHtml(mapped.text)}</div>
+                      </div>
+                    `;
+                  })
+                  .join("")
+              : `<div class="sd-empty-sub">No audit entries yet.</div>`
+          }
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// =======================
+// PATCH renderIncidents TO SUPPORT SELECTION
+// =======================
+
+renderIncidents = function(items = []) {
+  if (!incidentList) return;
+
+  latestIncidentSnapshot = items;
+  const filteredItems = applyIncidentFilters(items);
+  const visibleItems = sortIncidents(filteredItems);
+
+  if (!selectedIncidentId && items.length) {
+    selectedIncidentId = items[0].id;
+  }
+
+  if (!items.length) {
+    incidentList.innerHTML = `
+      <div class="sd-incident-shell">
+        ${renderIncidentFilterBar(items, visibleItems)}
+        <div class="sd-empty">
+          <div class="sd-empty-title">No incidents yet</div>
+          <div class="sd-empty-sub">The watch floor is quiet. Enjoy it while it lasts.</div>
+        </div>
+      </div>
+    `;
+    renderCaseDetailPanel(items);
+    return;
+  }
+
+  if (!visibleItems.length) {
+    incidentList.innerHTML = `
+      <div class="sd-incident-shell">
+        ${renderIncidentFilterBar(items, visibleItems)}
+        <div class="sd-empty">
+          <div class="sd-empty-title">No incidents match the current filter</div>
+          <div class="sd-empty-sub">Try widening the net. Even old sea captains did not inspect the whole ocean through a keyhole.</div>
+        </div>
+      </div>
+    `;
+    renderCaseDetailPanel(items);
+    return;
+  }
+
+  incidentList.innerHTML = `
+    <div class="sd-incident-shell">
+      ${renderIncidentFilterBar(items, visibleItems)}
+      <div class="sd-incident-grid">
+        ${visibleItems.map((incident) => {
+          const repeatCount = incident.repeatCount || 1;
+          const pressure = getPressureLevel(incident);
+          const fresh = isFresh(incident.lastSeenAt);
+          const rawStatus = String(incident.status || "pending_review");
+          const status = escapeHtml(rawStatus);
+          const buttonState = getButtonState(incident);
+          const isSelected = Number(selectedIncidentId) === Number(incident.id);
+
+          const repeatBadgeClass =
+            repeatCount >= 5 ? "sd-badge sd-badge-hot" :
+            repeatCount >= 3 ? "sd-badge sev-high" :
+            repeatCount >= 2 ? "sd-badge sd-badge-recurring" :
+            "sd-badge";
+
+          const repeatBadge = `
+            <span class="${repeatBadgeClass}">
+              ${repeatCount > 1 ? `Recurring x${repeatCount}` : "First seen"}
+            </span>
+          `;
+
+          const freshnessDot = fresh ? `<span class="fresh-dot"></span>` : "";
+
+          return `
+            <div class="sd-card incident-card sd-clickable ${pressure} ${isSelected ? "sd-selected" : ""}"
+                 onclick="selectIncident(${incident.id})">
+              <div class="sd-card-header">
+                <div>
+                  <div class="sd-eyebrow">
+                    Incident #${incident.id} ${freshnessDot}
+                  </div>
+                  <div class="sd-title">
+                    ${escapeHtml(incident.type)} · ${escapeHtml(incident.user)}
+                  </div>
+                </div>
+
+                <div class="sd-badge-row">
+                  <span class="sd-badge ${severityClass(incident.severity)}">
+                    ${escapeHtml((incident.severity || "low").toUpperCase())}
+                  </span>
+
+                  <span class="sd-badge sd-badge-action">
+                    ${escapeHtml(actionLabel(incident.action))}
+                  </span>
+
+                  ${repeatBadge}
+                </div>
+              </div>
+
+              <div class="sd-meta-row">
+                <div><strong>Risk:</strong> ${incident.riskScore}</div>
+                <div><strong>Status:</strong> <span class="sd-status-pill ${status}">${status}</span></div>
+                <div><strong>SLA:</strong> ${escapeHtml(incident.sla)}</div>
+                <div><strong>Repeats:</strong> ${repeatCount}</div>
+              </div>
+
+              <div class="sd-meta-row">
+                <div><strong>Created:</strong> ${timeAgo(incident.createdAt)}</div>
+                <div><strong>Updated:</strong> ${timeAgo(incident.updatedAt)}</div>
+                <div><strong>Last seen:</strong> ${timeAgo(incident.lastSeenAt)}</div>
+                <div><strong>Assigned:</strong> ${escapeHtml(incident.assignedTo || "unassigned")}</div>
+              </div>
+
+              <div class="sd-pressure ${pressure !== "normal" ? "sd-pressure-hot" : ""}">
+                ${repeatCount > 1 ? `Pattern repeating (${repeatCount}x)` : "Single occurrence"}
+              </div>
+
+              <div class="sd-chip-row">
+                ${(incident.reasonCodes || [])
+                  .map(r => `<span class="sd-chip">${escapeHtml(r)}</span>`)
+                  .join("")}
+              </div>
+
+              ${renderTimeline(incident)}
+              ${renderCaseHistory(incident)}
+
+              <div class="sd-operator-bar" onclick="event.stopPropagation()">
+                <div class="sd-operator-row">
+                  <input
+                    id="operator-input-${incident.id}"
+                    class="sd-operator-input"
+                    type="text"
+                    placeholder="Operator name"
+                    value="${escapeHtml(incident.assignedTo || incident.lastOperator || "Robert")}"
+                  />
+                </div>
+
+                <div class="sd-operator-actions">
+                  <button
+                    class="sd-btn sd-btn-assign"
+                    onclick="assignIncident(${incident.id})"
+                    ${buttonState.assignDisabled ? "disabled" : ""}
+                  >
+                    ${buttonState.assignLabel}
+                  </button>
+
+                  <button
+                    class="sd-btn sd-btn-ack"
+                    onclick="acknowledgeIncident(${incident.id})"
+                    ${buttonState.ackDisabled ? "disabled" : ""}
+                  >
+                    ${buttonState.ackLabel}
+                  </button>
+
+                  <button
+                    class="sd-btn sd-btn-resolve"
+                    onclick="resolveIncident(${incident.id})"
+                    ${buttonState.resolveDisabled ? "disabled" : ""}
+                  >
+                    ${buttonState.resolveLabel}
+                  </button>
+                </div>
+
+                <div class="sd-operator-meta">
+                  <span><strong>Last operator:</strong> ${escapeHtml(incident.lastOperator || "none")}</span>
+                </div>
+
+                <div id="operator-feedback-${incident.id}"></div>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `;
+
+  visibleItems.forEach((incident) => renderOperatorFeedback(incident.id));
+  renderCaseDetailPanel(items);
+};
+
+
+// =======================
+// ACTION LOG + LIVE EVENT FEED PANELS
+// =======================
+
+(function injectSidePanelStyles() {
+  if (document.getElementById("sd-sidepanel-styles")) return;
+
+  const style = document.createElement("style");
+  style.id = "sd-sidepanel-styles";
+  style.textContent = `
+    .sd-side-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .sd-side-item {
+      padding: 8px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .sd-side-time {
+      opacity: 0.62;
+      font-size: 10px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .sd-side-title {
+      font-weight: 700;
+      margin-bottom: 3px;
+      word-break: break-word;
+    }
+
+    .sd-side-meta {
+      opacity: 0.82;
+      word-break: break-word;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+function renderActionLogPanel(items = []) {
+  const panel =
+    document.getElementById("actionLog") ||
+    document.getElementById("action-log") ||
+    document.getElementById("actionLogPanel");
+
+  if (!panel) return;
+
+  if (!items.length) {
+    panel.innerHTML = `
+      <div class="sd-empty">
+        <div class="sd-empty-title">No actions yet</div>
+        <div class="sd-empty-sub">No queued actions. The engine is quiet for now.</div>
+      </div>
+    `;
+    return;
+  }
+
+  const recent = items.slice(0, 8);
+
+  panel.innerHTML = `
+    <div class="sd-side-list">
+      ${recent.map((action) => `
+        <div class="sd-side-item">
+          <div class="sd-side-time">${timeAgo(action.createdAt)}</div>
+          <div class="sd-side-title">${escapeHtml(action.title || action.type || "Action")}</div>
+          <div class="sd-side-meta">
+            <div><strong>User:</strong> ${escapeHtml(action.user || "-")}</div>
+            <div><strong>Status:</strong> ${escapeHtml(action.status || "pending")}</div>
+            <div><strong>Severity:</strong> ${escapeHtml(action.severity || "low")}</div>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function buildLiveEventFeedFromIncidents(items = []) {
+  const events = [];
+
+  items.forEach((incident) => {
+    events.push({
+      at: incident.updatedAt || incident.createdAt,
+      title: `${incident.type} · ${incident.user}`,
+      meta: `Status ${incident.status || "pending_review"} · Risk ${incident.riskScore || 0} · Repeats ${incident.repeatCount || 1}`
+    });
+
+    if (Array.isArray(incident.auditTrail)) {
+      incident.auditTrail.slice(0, 3).forEach((entry) => {
+        const mapped = mapAuditTypeToText(entry, incident);
+        events.push({
+          at: entry.at,
+          title: mapped.text,
+          meta: `${incident.type} · ${incident.user}`
+        });
+      });
+    }
+  });
+
+  return events
+    .sort((a, b) => new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime())
+    .slice(0, 10);
+}
+
+function renderLiveEventFeedPanel(incidents = []) {
+  const panel =
+    document.getElementById("liveEventFeed") ||
+    document.getElementById("live-event-feed") ||
+    document.getElementById("liveEventFeedPanel");
+
+  if (!panel) return;
+
+  const feed = buildLiveEventFeedFromIncidents(incidents);
+
+  if (!feed.length) {
+    panel.innerHTML = `
+      <div class="sd-empty">
+        <div class="sd-empty-title">No live events</div>
+        <div class="sd-empty-sub">Nothing is hitting the engine right now.</div>
+      </div>
+    `;
+    return;
+  }
+
+  panel.innerHTML = `
+    <div class="sd-side-list">
+      ${feed.map((item) => `
+        <div class="sd-side-item">
+          <div class="sd-side-time">${timeAgo(item.at)}</div>
+          <div class="sd-side-title">${escapeHtml(item.title)}</div>
+          <div class="sd-side-meta">${escapeHtml(item.meta || "")}</div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+// =======================
+// PATCH refreshAll TO UPDATE SIDE PANELS
+// =======================
+
+const originalRefreshAll = refreshAll;
+
+refreshAll = async function() {
+  try {
+    const [incidents, actions, summary] = await Promise.all([
+      fetchJson("/api/incidents"),
+      fetchJson("/api/actions"),
+      fetchJson("/api/summary")
+    ]);
+
+    latestIncidentSnapshot = incidents;
+    renderIncidents(incidents);
+    renderActions(actions);
+    renderSummary(summary);
+    renderCaseDetailPanel(incidents);
+    renderActionLogPanel(actions);
+    renderLiveEventFeedPanel(incidents);
+
+    if (authStatus) authStatus.textContent = "Live";
+  } catch (error) {
+    console.error(error);
+    if (authStatus) authStatus.textContent = "API error";
+  }
+};
+
+
+// =======================
+// TOP KPI + TREND + PRESSURE PANELS
+// =======================
+
+(function injectTopPanelStyles() {
+  if (document.getElementById("sd-top-panel-styles")) return;
+
+  const style = document.createElement("style");
+  style.id = "sd-top-panel-styles";
+  style.textContent = `
+    .sd-kpi-value {
+      font-size: 34px;
+      font-weight: 800;
+      line-height: 1;
+      margin-top: 6px;
+      margin-bottom: 4px;
+    }
+
+    .sd-kpi-sub {
+      font-size: 12px;
+      opacity: 0.74;
+      line-height: 1.35;
+    }
+
+    .sd-mini-stack {
+      display: grid;
+      gap: 8px;
+    }
+
+    .sd-mini-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 12px;
+      padding: 7px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .sd-mini-row:last-child {
+      border-bottom: 0;
+    }
+
+    .sd-sparkbar-wrap {
+      display: grid;
+      gap: 10px;
+    }
+
+    .sd-sparkbar {
+      height: 10px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .sd-sparkbar-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, rgba(120,160,255,0.45), rgba(255,90,90,0.85));
+    }
+
+    .sd-panel-note {
+      font-size: 12px;
+      opacity: 0.8;
+      line-height: 1.4;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+function getPanelElement(possibleIds = []) {
+  for (const id of possibleIds) {
+    const el = document.getElementById(id);
+    if (el) return el;
+  }
+  return null;
+}
+
+function countCritical(incidents = []) {
+  return incidents.filter((x) => x.severity === "critical" && x.status !== "resolved").length;
+}
+
+function countPending(incidents = []) {
+  return incidents.filter((x) => x.status === "pending_review").length;
+}
+
+function countExecuted(actions = []) {
+  return actions.filter((x) => x.status === "executed" || x.status === "done").length;
+}
+
+function computeRiskTrendStats(incidents = []) {
+  const recent = incidents.slice(0, 12);
+  const avgRisk =
+    recent.length
+      ? Math.round(recent.reduce((sum, x) => sum + Number(x.riskScore || 0), 0) / recent.length)
+      : 0;
+
+  const recurring = recent.filter((x) => (x.repeatCount || 1) > 1).length;
+  const spiking = recent.filter((x) => x.trendLabel === "spike").length;
+
+  return { avgRisk, recurring, spiking };
+}
+
+function computePressureStats(incidents = []) {
+  const open = incidents.filter((x) => x.status !== "resolved");
+  const pressurePoints = open.reduce((sum, x) => {
+    const repeats = x.repeatCount || 1;
+    const severityWeight =
+      x.severity === "critical" ? 4 :
+      x.severity === "high" ? 3 :
+      x.severity === "medium" ? 2 : 1;
+
+    return sum + repeats * severityWeight;
+  }, 0);
+
+  const normalized = Math.min(100, pressurePoints * 4);
+  return {
+    openCount: open.length,
+    pressurePoints,
+    normalized
+  };
+}
+
+function renderCriticalKpi(incidents = []) {
+  const panel = getPanelElement(["criticalCard", "criticalCount", "criticalPanel"]);
+  if (!panel) return;
+
+  const value = countCritical(incidents);
+
+  panel.innerHTML = `
+    <div class="sd-eyebrow">Critical</div>
+    <div class="sd-kpi-value">${value}</div>
+    <div class="sd-kpi-sub">Open critical incidents requiring immediate attention.</div>
+  `;
+}
+
+function renderPendingKpi(incidents = []) {
+  const panel = getPanelElement(["pendingCard", "pendingCount", "pendingPanel"]);
+  if (!panel) return;
+
+  const value = countPending(incidents);
+
+  panel.innerHTML = `
+    <div class="sd-eyebrow">Pending</div>
+    <div class="sd-kpi-value">${value}</div>
+    <div class="sd-kpi-sub">Cases still waiting for human acknowledgement.</div>
+  `;
+}
+
+function renderExecutedKpi(actions = []) {
+  const panel = getPanelElement(["executedCard", "executedCount", "executedPanel"]);
+  if (!panel) return;
+
+  const value = countExecuted(actions);
+
+  panel.innerHTML = `
+    <div class="sd-eyebrow">Executed</div>
+    <div class="sd-kpi-value">${value}</div>
+    <div class="sd-kpi-sub">Actions completed by operator or system flow.</div>
+  `;
+}
+
+function renderRiskTrendPanel(incidents = []) {
+  const panel = getPanelElement(["riskTrend", "riskTrendPanel", "risk-trend"]);
+  if (!panel) return;
+
+  const stats = computeRiskTrendStats(incidents);
+  const fill = Math.max(6, stats.avgRisk);
+
+  panel.innerHTML = `
+    <div class="sd-mini-stack">
+      <div class="sd-eyebrow">Risk Trend</div>
+      <div class="sd-sparkbar-wrap">
+        <div class="sd-sparkbar">
+          <div class="sd-sparkbar-fill" style="width:${fill}%"></div>
+        </div>
+        <div class="sd-panel-note">
+          Average recent risk is <strong>${stats.avgRisk}</strong>. Recurring cases: <strong>${stats.recurring}</strong>. Spike-labelled cases: <strong>${stats.spiking}</strong>.
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderIncidentPressurePanel(incidents = []) {
+  const panel = getPanelElement(["incidentPressure", "incidentPressurePanel", "incident-pressure"]);
+  if (!panel) return;
+
+  const stats = computePressureStats(incidents);
+
+  panel.innerHTML = `
+    <div class="sd-mini-stack">
+      <div class="sd-eyebrow">Incident Pressure</div>
+
+      <div class="sd-sparkbar-wrap">
+        <div class="sd-sparkbar">
+          <div class="sd-sparkbar-fill" style="width:${Math.max(4, stats.normalized)}%"></div>
+        </div>
+      </div>
+
+      <div class="sd-mini-row">
+        <span>Open cases</span>
+        <strong>${stats.openCount}</strong>
+      </div>
+      <div class="sd-mini-row">
+        <span>Pressure points</span>
+        <strong>${stats.pressurePoints}</strong>
+      </div>
+      <div class="sd-mini-row">
+        <span>Normalized load</span>
+        <strong>${stats.normalized}%</strong>
+      </div>
+    </div>
+  `;
+}
+
+// =======================
+// PATCH refreshAll AGAIN TO UPDATE TOP PANELS
+// =======================
+
+const refreshAllWithSidePanels = refreshAll;
+
+refreshAll = async function() {
+  try {
+    const [incidents, actions, summary] = await Promise.all([
+      fetchJson("/api/incidents"),
+      fetchJson("/api/actions"),
+      fetchJson("/api/summary")
+    ]);
+
+    latestIncidentSnapshot = incidents;
+
+    renderIncidents(incidents);
+    renderActions(actions);
+    renderSummary(summary);
+    renderCaseDetailPanel(incidents);
+    renderActionLogPanel(actions);
+    renderLiveEventFeedPanel(incidents);
+
+    renderCriticalKpi(incidents);
+    renderPendingKpi(incidents);
+    renderExecutedKpi(actions);
+    renderRiskTrendPanel(incidents);
+    renderIncidentPressurePanel(incidents);
+
+    if (authStatus) authStatus.textContent = "Live";
+  } catch (error) {
+    console.error(error);
+    if (authStatus) authStatus.textContent = "API error";
+  }
+};
+

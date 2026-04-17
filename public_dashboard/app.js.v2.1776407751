@@ -1,0 +1,323 @@
+const API_BASE = "http://localhost:3000";
+const WS_URL = "ws://localhost:3000";
+
+const state = {
+  incidents: [],
+  actions: [],
+  cases: [],
+  summary: null,
+  wsConnected: false
+};
+
+function el(id) {
+  return document.getElementById(id);
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function badgeClass(value) {
+  const v = String(value || "").toLowerCase();
+
+  if (["critical", "block", "breach", "pending_review"].includes(v)) return "badge danger";
+  if (["high", "manual_review", "at_risk"].includes(v)) return "badge warning";
+  if (["medium", "rate_limit", "elevated"].includes(v)) return "badge info";
+  if (["low", "log", "stable", "normal"].includes(v)) return "badge muted";
+
+  return "badge";
+}
+
+function fmt(value) {
+  if (!value) return "—";
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return value;
+  }
+}
+
+async function fetchJson(path) {
+  const res = await fetch(`${API_BASE}${path}`);
+  if (!res.ok) throw new Error(`${path} failed: ${res.status}`);
+  return await res.json();
+}
+
+async function loadAll() {
+  const [incidents, actions, summary, cases] = await Promise.all([
+    fetchJson("/api/incidents"),
+    fetchJson("/api/actions"),
+    fetchJson("/api/summary"),
+    fetchJson("/api/cases")
+  ]);
+
+  state.incidents = incidents;
+  state.actions = actions;
+  state.summary = summary;
+  state.cases = cases;
+
+  render();
+}
+
+function renderSummary() {
+  const root = el("summaryPanel");
+  if (!root) return;
+
+  const stats = state.summary?.stats || {};
+  const summary = state.summary?.summary || "No summary available.";
+  const recommendation = state.summary?.recommendation || "No recommendation available.";
+
+  root.innerHTML = `
+    <div class="panel-header">
+      <div>
+        <div class="eyebrow">AI SUMMARY</div>
+        <h2>Operational Overview</h2>
+      </div>
+      <div class="status-dot ${state.wsConnected ? "live" : "down"}"></div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Incidents</div>
+        <div class="stat-value">${stats.incidents ?? 0}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Critical</div>
+        <div class="stat-value">${stats.critical ?? 0}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">High</div>
+        <div class="stat-value">${stats.high ?? 0}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Recurring</div>
+        <div class="stat-value">${stats.recurring ?? 0}</div>
+      </div>
+    </div>
+
+    <div class="summary-copy">
+      <p>${escapeHtml(summary)}</p>
+      <p class="recommendation">${escapeHtml(recommendation)}</p>
+    </div>
+  `;
+}
+
+function renderCases() {
+  const root = el("casePanel");
+  if (!root) return;
+
+  if (!state.cases.length) {
+    root.innerHTML = `
+      <div class="panel-header">
+        <div>
+          <div class="eyebrow">CASE FLOW</div>
+          <h2>Attack Chains</h2>
+        </div>
+      </div>
+      <div class="empty-state">No cases yet.</div>
+    `;
+    return;
+  }
+
+  root.innerHTML = `
+    <div class="panel-header">
+      <div>
+        <div class="eyebrow">CASE FLOW</div>
+        <h2>Attack Chains</h2>
+      </div>
+    </div>
+
+    <div class="case-list">
+      ${state.cases.map(renderCaseCard).join("")}
+    </div>
+  `;
+}
+
+function renderCaseCard(c) {
+  const incidents = [...(c.incidents || [])].sort((a, b) => {
+    return new Date(a.createdAt) - new Date(b.createdAt);
+  });
+
+  return `
+    <div class="case-card">
+      <div class="case-top">
+        <div>
+          <div class="case-id">${escapeHtml(c.caseId)}</div>
+          <div class="case-title">${escapeHtml(c.caseLabel || "multi-signal investigation")}</div>
+        </div>
+        <div class="case-badges">
+          <span class="${badgeClass(c.severity)}">${escapeHtml(c.severity)}</span>
+          <span class="${badgeClass(c.status)}">${escapeHtml(c.status)}</span>
+        </div>
+      </div>
+
+      <div class="case-meta">
+        <div><span>User</span><strong>${escapeHtml(c.user)}</strong></div>
+        <div><span>Incidents</span><strong>${c.incidentCount ?? incidents.length}</strong></div>
+      </div>
+
+      <div class="timeline">
+        ${incidents.map(renderTimelineItem).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderTimelineItem(incident) {
+  const reasons = (incident.reasonCodes || []).map((r) => {
+    return `<span class="mini-tag">${escapeHtml(r)}</span>`;
+  }).join("");
+
+  return `
+    <div class="timeline-item">
+      <div class="timeline-line"></div>
+      <div class="timeline-dot ${String(incident.severity).toLowerCase()}"></div>
+      <div class="timeline-body">
+        <div class="timeline-head">
+          <div class="timeline-title">
+            ${escapeHtml(incident.type)} · ${escapeHtml(incident.action)}
+          </div>
+          <div class="timeline-time">${escapeHtml(fmt(incident.createdAt))}</div>
+        </div>
+
+        <div class="timeline-sub">
+          <span class="${badgeClass(incident.severity)}">${escapeHtml(incident.severity)}</span>
+          <span class="${badgeClass(incident.trendLabel)}">${escapeHtml(incident.trendLabel || "normal")}</span>
+          <span class="${badgeClass(incident.correlationLabel)}">${escapeHtml(incident.correlationLabel || "none")}</span>
+        </div>
+
+        <div class="timeline-grid">
+          <div><span>Risk</span><strong>${incident.riskScore ?? 0}</strong></div>
+          <div><span>IP</span><strong>${escapeHtml(incident.ip || "—")}</strong></div>
+          <div><span>Repeats</span><strong>${incident.repeatCount ?? 1}</strong></div>
+          <div><span>Links</span><strong>${(incident.linkedIncidentIds || []).length}</strong></div>
+        </div>
+
+        <div class="timeline-tags">${reasons || '<span class="mini-tag">NO_REASON_CODES</span>'}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderIncidents() {
+  const root = el("incidentPanel");
+  if (!root) return;
+
+  if (!state.incidents.length) {
+    root.innerHTML = `<div class="empty-state">No incidents yet.</div>`;
+    return;
+  }
+
+  root.innerHTML = state.incidents.map((incident) => `
+    <div class="list-card">
+      <div class="list-head">
+        <div class="list-title">${escapeHtml(incident.type)} · ${escapeHtml(incident.user)}</div>
+        <div class="list-badges">
+          <span class="${badgeClass(incident.severity)}">${escapeHtml(incident.severity)}</span>
+          <span class="${badgeClass(incident.action)}">${escapeHtml(incident.action)}</span>
+        </div>
+      </div>
+
+      <div class="list-grid">
+        <div><span>Risk Score</span><strong>${incident.riskScore ?? 0}</strong></div>
+        <div><span>Repeat Count</span><strong>${incident.repeatCount ?? 1}</strong></div>
+        <div><span>Case ID</span><strong>${escapeHtml(incident.caseId || "—")}</strong></div>
+        <div><span>Updated</span><strong>${escapeHtml(fmt(incident.updatedAt))}</strong></div>
+      </div>
+    </div>
+  `).join("");
+}
+
+function renderActions() {
+  const root = el("actionPanel");
+  if (!root) return;
+
+  if (!state.actions.length) {
+    root.innerHTML = `<div class="empty-state">No actions yet.</div>`;
+    return;
+  }
+
+  root.innerHTML = state.actions.map((action) => `
+    <div class="list-card">
+      <div class="list-head">
+        <div class="list-title">${escapeHtml(action.title || action.type)}</div>
+        <div class="list-badges">
+          <span class="${badgeClass(action.severity)}">${escapeHtml(action.severity)}</span>
+          <span class="${badgeClass(action.status)}">${escapeHtml(action.status)}</span>
+        </div>
+      </div>
+
+      <div class="list-grid">
+        <div><span>Type</span><strong>${escapeHtml(action.type)}</strong></div>
+        <div><span>User</span><strong>${escapeHtml(action.user)}</strong></div>
+        <div><span>Incident</span><strong>${action.incidentId}</strong></div>
+        <div><span>Created</span><strong>${escapeHtml(fmt(action.createdAt))}</strong></div>
+      </div>
+    </div>
+  `).join("");
+}
+
+function renderConnection() {
+  const root = el("connectionStatus");
+  if (!root) return;
+  root.textContent = state.wsConnected ? "Live feed connected" : "Live feed disconnected";
+}
+
+function render() {
+  renderSummary();
+  renderCases();
+  renderIncidents();
+  renderActions();
+  renderConnection();
+}
+
+function connectWs() {
+  try {
+    const ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      state.wsConnected = true;
+      renderConnection();
+    };
+
+    ws.onclose = () => {
+      state.wsConnected = false;
+      renderConnection();
+      setTimeout(connectWs, 1500);
+    };
+
+    ws.onerror = () => {
+      state.wsConnected = false;
+      renderConnection();
+    };
+
+    ws.onmessage = async () => {
+      try {
+        await loadAll();
+      } catch (err) {
+        console.error("Refresh after WS message failed:", err);
+      }
+    };
+  } catch (err) {
+    console.error("WebSocket connect failed:", err);
+    state.wsConnected = false;
+    renderConnection();
+    setTimeout(connectWs, 1500);
+  }
+}
+
+async function boot() {
+  try {
+    await loadAll();
+  } catch (err) {
+    console.error("Initial load failed:", err);
+  }
+  connectWs();
+}
+
+boot();

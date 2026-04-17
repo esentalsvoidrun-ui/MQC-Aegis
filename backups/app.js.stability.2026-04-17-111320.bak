@@ -20,23 +20,12 @@ let allIncidents = [];
 let allActions = [];
 let selectedIncidentId = null;
 let summaryState = null;
-let ws;
-let reconnectTimer = null;
-let refreshTimer = null;
-let heartbeatTimer = null;
-let isRefreshing = false;
-let wsConnected = false;
-let reconnectDelay = 1500;
 
 function esc(v) {
   return String(v ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
-}
-
-function setConnectionStatus(text) {
-  if (connectionStatus) connectionStatus.textContent = text;
 }
 
 function badgeClass(severity) {
@@ -252,28 +241,14 @@ function renderActionList() {
   actionList.innerHTML = allActions.slice(0, 20).map(renderAction).join("");
 }
 
-async function fetchJsonWithRetry(url, options = {}, tries = 4, delay = 600) {
-  let lastError;
-  for (let i = 0; i < tries; i++) {
-    try {
-      const res = await fetch(url, options);
-      if (!res.ok) throw new Error(`${url} returned ${res.status}`);
-      return await res.json();
-    } catch (err) {
-      lastError = err;
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  }
-  throw lastError;
-}
-
 async function loadDetail(id) {
   selectedIncidentId = id;
   if (!detailPanel) return;
   detailPanel.innerHTML = "Loading incident detail...";
 
   try {
-    const data = await fetchJsonWithRetry(`/api/incidents/${id}`);
+    const r = await fetch(`/api/incidents/${id}`);
+    const data = await r.json();
 
     if (!data.ok) {
       detailPanel.innerHTML = `<div class="muted">${esc(data.error || "Detail not available.")}</div>`;
@@ -359,14 +334,14 @@ async function loadDetail(id) {
 
 async function updateIncidentStatus(id, status) {
   try {
-    const data = await fetchJsonWithRetry(`/api/incidents/${id}/status`, {
+    const r = await fetch(`/api/incidents/${id}/status`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status })
     });
-
+    const data = await r.json();
     if (!data.ok) return;
-    await refreshAll(true);
+    await refreshAll();
     await loadDetail(id);
   } catch (err) {
     console.error(err);
@@ -390,34 +365,23 @@ function prepend(container, html, max = 10) {
   }
 }
 
-async function refreshAll(force = false) {
-  if (isRefreshing && !force) return;
-  isRefreshing = true;
-
+async function refreshAll() {
   try {
-    const [incidents, actions, summary] = await Promise.all([
-      fetchJsonWithRetry("/api/incidents"),
-      fetchJsonWithRetry("/api/actions"),
-      fetchJsonWithRetry("/api/summary")
+    const [incRes, actRes, sumRes] = await Promise.all([
+      fetch("/api/incidents"),
+      fetch("/api/actions"),
+      fetch("/api/summary")
     ]);
 
-    allIncidents = incidents;
-    allActions = actions;
+    allIncidents = await incRes.json();
+    allActions = await actRes.json();
+    const summary = await sumRes.json();
 
     renderIncidentList();
     renderActionList();
     renderSummaryPanel(summary);
-
-    if (!wsConnected) {
-      setConnectionStatus("HTTP sync active");
-    }
   } catch (err) {
-    console.error("refreshAll failed:", err);
-    if (!summaryState && summaryBox) {
-      summaryBox.innerHTML = "<div class='muted'>Failed to load summary. Retrying…</div>";
-    }
-  } finally {
-    isRefreshing = false;
+    console.error(err);
   }
 }
 
@@ -429,7 +393,7 @@ async function seedDemoEvents() {
   ];
 
   for (const event of events) {
-    await fetchJsonWithRetry("/event", {
+    await fetch("/event", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(event)
@@ -438,92 +402,58 @@ async function seedDemoEvents() {
   }
 }
 
-function startRefreshLoop() {
-  if (refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = setInterval(() => {
-    refreshAll();
-  }, 8000);
-}
-
-function startHeartbeat() {
-  if (heartbeatTimer) clearInterval(heartbeatTimer);
-  heartbeatTimer = setInterval(async () => {
-    if (!wsConnected) {
-      await refreshAll();
-    }
-  }, 5000);
-}
-
-function scheduleReconnect() {
-  if (reconnectTimer) return;
-  setConnectionStatus("WS reconnecting...");
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    connectWs();
-  }, reconnectDelay);
-  reconnectDelay = Math.min(reconnectDelay * 1.5, 8000);
+async function loadInitial() {
+  try {
+    await refreshAll();
+    if (authStatus) authStatus.textContent = "Operator mode active";
+  } catch (err) {
+    console.error(err);
+    if (summaryBox) summaryBox.textContent = "Failed to load summary.";
+  }
 }
 
 function connectWs() {
-  try {
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-      return;
-    }
+  const ws = new WebSocket(wsUrl);
 
-    ws = new WebSocket(wsUrl);
-    setConnectionStatus("WS connecting...");
+  ws.onopen = () => {
+    if (connectionStatus) connectionStatus.textContent = "WS connected";
+  };
 
-    ws.onopen = async () => {
-      wsConnected = true;
-      reconnectDelay = 1500;
-      setConnectionStatus("WS connected");
-      await refreshAll(true);
-    };
+  ws.onclose = () => {
+    if (connectionStatus) connectionStatus.textContent = "WS disconnected";
+    setTimeout(connectWs, 1500);
+  };
 
-    ws.onclose = () => {
-      wsConnected = false;
-      setConnectionStatus("WS disconnected");
-      scheduleReconnect();
-    };
+  ws.onerror = () => {
+    if (connectionStatus) connectionStatus.textContent = "WS error";
+  };
 
-    ws.onerror = () => {
-      wsConnected = false;
-      setConnectionStatus("WS error");
-      try { ws.close(); } catch {}
-    };
+  ws.onmessage = async (msg) => {
+    try {
+      const data = JSON.parse(msg.data);
 
-    ws.onmessage = async (msg) => {
-      try {
-        const data = JSON.parse(msg.data);
-
-        if (data.type === "bootstrap") {
-          allIncidents = data.payload?.incidents || [];
-          allActions = data.payload?.actions || [];
-          renderIncidentList();
-          renderActionList();
-          if (data.payload?.summary) renderSummaryPanel(data.payload.summary);
-          return;
-        }
-
-        if (data.type === "event" && liveFeed) {
-          prepend(liveFeed, renderFeed(data.payload), 14);
-        }
-
-        if (data.type === "incident" || data.type === "incident_updated" || data.type === "action" || data.type === "summary") {
-          await refreshAll(true);
-          if (selectedIncidentId) {
-            await loadDetail(selectedIncidentId);
-          }
-        }
-      } catch (err) {
-        console.error("WS parse error:", err);
+      if (data.type === "bootstrap") {
+        allIncidents = data.payload?.incidents || [];
+        allActions = data.payload?.actions || [];
+        renderIncidentList();
+        renderActionList();
+        if (data.payload?.summary) renderSummaryPanel(data.payload.summary);
       }
-    };
-  } catch (err) {
-    console.error("connectWs failed:", err);
-    wsConnected = false;
-    scheduleReconnect();
-  }
+
+      if (data.type === "event" && liveFeed) {
+        prepend(liveFeed, renderFeed(data.payload), 14);
+      }
+
+      if (data.type === "incident" || data.type === "incident_updated" || data.type === "action" || data.type === "summary") {
+        await refreshAll();
+        if (selectedIncidentId) {
+          await loadDetail(selectedIncidentId);
+        }
+      }
+    } catch (err) {
+      console.error("WS parse error:", err);
+    }
+  };
 }
 
 severityFilter?.addEventListener("change", renderIncidentList);
@@ -535,22 +465,5 @@ clearFilters?.addEventListener("click", () => {
 });
 seedDemo?.addEventListener("click", seedDemoEvents);
 
-document.addEventListener("visibilitychange", async () => {
-  if (!document.hidden) {
-    await refreshAll(true);
-    if (!wsConnected) connectWs();
-  }
-});
-
-window.addEventListener("focus", async () => {
-  await refreshAll(true);
-  if (!wsConnected) connectWs();
-});
-
-(async function boot() {
-  if (authStatus) authStatus.textContent = "Operator mode active";
-  await refreshAll(true);
-  connectWs();
-  startRefreshLoop();
-  startHeartbeat();
-})();
+loadInitial();
+connectWs();

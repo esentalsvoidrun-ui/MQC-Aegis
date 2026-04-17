@@ -1,0 +1,328 @@
+import OpenAI from "openai";
+import dotenv from "dotenv";
+import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
+
+dotenv.config();
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const rootDir = path.resolve(__dirname, "..");
+
+app.use(express.json());
+app.use(express.static(path.join(rootDir, "public_dashboard")));
+
+const users = new Map();
+
+async function generateAIInsight(data) {
+  try {
+    const prompt = `
+You are a sharp business analyst.
+
+Business metrics:
+Users: ${data.users}
+Revenue: ${data.revenue}
+Sessions: ${data.sessions}
+Churn: ${data.churn}
+
+System result:
+Risk: ${data.risk}
+Confidence: ${data.confidence}
+Signals: ${(data.signals || []).join(", ")}
+Warnings: ${(data.warnings || []).join(", ")}
+Positives: ${(data.positives || []).join(", ")}
+
+Write:
+1. One brutally honest insight in max 2 sentences.
+2. One hidden risk in 1 sentence.
+
+No fluff. No buzzwords. Be direct.
+`;
+
+    const response = await openai.chat.completions.create({
+  model: "gpt-5-mini",
+  messages: [
+    { role: "user", content: prompt }
+  ]
+});
+
+return response.choices[0].message.content;
+
+    return response.output_text?.trim() || "AI unavailable. Core system insight still active.";
+  } catch (err) {
+    console.error("AI error:", err);
+    return "AI unavailable. Core system insight still active.";
+  }
+}
+
+function analyzeMetrics({ users, revenue, sessions, churn }) {
+  const u = Number(users) || 0;
+  const r = Number(revenue) || 0;
+  const s = Number(sessions) || 0;
+  const c = Number(churn) || 0;
+
+  let riskScore = 0;
+  const signals = [];
+  const positives = [];
+  const warnings = [];
+
+  if (r > 100000) positives.push("Revenue is strong");
+  else if (r < 20000) {
+    warnings.push("Revenue base is still weak");
+    riskScore += 20;
+  }
+
+  if (u > 1000) positives.push("User base is growing");
+  else if (u < 100) {
+    warnings.push("User growth is still limited");
+    riskScore += 15;
+  }
+
+  if (s > u * 3 && u > 0) positives.push("Engagement looks healthy");
+  else if (u > 0 && s < u) {
+    warnings.push("Engagement is low relative to user count");
+    riskScore += 20;
+    signals.push("Engagement is low relative to user count");
+  }
+
+  if (c >= 8) {
+    warnings.push("Churn is critically high");
+    riskScore += 40;
+    signals.push("Retention breakdown risk");
+  } else if (c >= 4) {
+    warnings.push("Churn is rising");
+    riskScore += 25;
+    signals.push("Early retention pressure");
+  } else if (c <= 2) {
+    positives.push("Churn is under control");
+  }
+
+  if (r > 80000 && c >= 4) {
+    warnings.push("Growth is happening, but retention is leaking");
+    riskScore += 15;
+    signals.push("Scaling too early can amplify losses");
+  }
+
+  if (u > 500 && s > 2000 && c <= 2) {
+    positives.push("Growth and retention are aligned");
+    signals.push("Healthy operating zone");
+  }
+
+  if (u < 200 && r > 50000) {
+    signals.push("High revenue concentration detected");
+    warnings.push("Revenue may depend on too few customers");
+    riskScore += 15;
+  }
+
+  let risk = "LOW";
+  if (riskScore >= 60) risk = "HIGH";
+  else if (riskScore >= 30) risk = "MEDIUM";
+
+  let confidence = 70;
+  const filledFields = [u, r, s, c].filter(v => v > 0).length;
+  confidence += filledFields * 5;
+  if (signals.length >= 2) confidence += 5;
+  if (warnings.length >= 2 || positives.length >= 2) confidence += 5;
+  if (confidence > 95) confidence = 95;
+
+  let insight = "";
+
+  if (risk === "HIGH") {
+    insight = "Critical stress detected. Growth is masking structural weakness — immediate intervention required.";
+  } else if (risk === "MEDIUM") {
+    insight = "Mixed signals detected. Growth exists, but instability could slow or reverse momentum.";
+  } else {
+    insight = "System stable. Conditions support controlled scaling with low immediate risk.";
+  }
+
+  let action = "";
+
+  if (c >= 8) {
+    action = "Stop scaling. Fix retention immediately or risk compounding losses.";
+  } else if (r > 80000 && c >= 4) {
+    action = "Review onboarding, activation, and customer success before scaling further.";
+  } else if (s < u && u > 0) {
+    action = "Improve engagement loops, product usage, and revisit feature adoption.";
+  } else if (risk === "LOW") {
+    action = "Proceed with controlled scaling. Maintain discipline and monitor key signals.";
+  } else {
+    action = "Tighten weak points and monitor the next 2–4 weeks before making bigger moves.";
+  }
+
+  return {
+    insight,
+    risk,
+    confidence,
+    action,
+    signals,
+    positives,
+    warnings,
+    riskScore
+  };
+}
+
+app.post("/api/register", (req, res) => {
+  const { email, password } = req.body || {};
+
+  if (!email || !password) {
+    return res.status(400).json({ error: "Email and password required" });
+  }
+
+  if (users.has(email)) {
+    return res.status(400).json({ error: "User already exists" });
+  }
+
+  users.set(email, { password });
+  return res.json({ ok: true, message: "Registered successfully" });
+});
+
+app.post("/api/login", (req, res) => {
+  const { email, password } = req.body || {};
+
+  if (!email || !password) {
+    return res.status(400).json({ error: "Email and password required" });
+  }
+
+  const found = users.get(email);
+
+  if (!found) {
+    users.set(email, { password });
+  } else if (found.password !== password) {
+    return res.status(401).json({ error: "Wrong password" });
+  }
+
+  const token = "demo-token";
+  return res.json({ ok: true, token });
+});
+
+app.post("/analyze", async (req, res) => {
+  const auth = req.headers.authorization;
+
+  if (!auth) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const result = analyzeMetrics(req.body || {});
+    const aiInsight = await generateAIInsight({
+      ...req.body,
+      ...result
+    });
+
+    return res.json({
+      ok: true,
+      ...result,
+      aiInsight
+    });
+  } catch (error) {
+    console.error("Analyze error:", error);
+    return res.status(500).json({
+      ok: false,
+      error: "Failed to analyze metrics"
+    });
+  }
+});
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(rootDir, "public_dashboard", "index.html"));
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+});
+
+// SIGNALDESK_AI_INSIGHT_ROUTE
+app.get("/api/ai-insight", async (req, res) => {
+  try {
+    const context = {
+      users: Math.floor(900 + Math.random() * 900),
+      revenue: Math.floor(20000 + Math.random() * 50000),
+      risk: Math.floor(8 + Math.random() * 55),
+      sessions: Math.floor(20 + Math.random() * 180),
+      timestamp: Date.now()
+    };
+
+    const fallbackInsight = (() => {
+      const revenueTone =
+        context.revenue > 50000
+          ? "Revenue is running strongly above baseline."
+          : "Revenue is active but still has room to accelerate.";
+
+      const riskTone =
+        context.risk < 20
+          ? "Risk remains contained."
+          : context.risk < 40
+          ? "Risk is elevated but manageable."
+          : "Risk conditions are rising and should be monitored closely.";
+
+      const userTone =
+        context.users > 1400
+          ? "User activity is unusually strong."
+          : "User activity is stable and healthy.";
+
+      return `${userTone} ${revenueTone} ${riskTone} Recommendation: continue monitoring anomaly density while preserving current decision flow.`;
+    })();
+
+    if (process.env.OPENAI_API_KEY) {
+      try {
+        const OpenAI = (await import("openai")).default;
+        const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+        const response = await client.chat.completions.create({
+          model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+          temperature: 0.7,
+          max_tokens: 140,
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are the AI analyst inside SignalDesk, an enterprise decision engine dashboard. Return one concise, sharp executive insight in plain English. Sound premium, confident, and product-grade. No bullets. No markdown."
+            },
+            {
+              role: "user",
+              content:
+                `Analyze this dashboard snapshot and give one strong operational insight with a recommendation. Data: users=${context.users}, revenue=${context.revenue}, risk=${context.risk}, sessions=${context.sessions}.`
+            }
+          ]
+        });
+
+        const insight =
+          response?.choices?.[0]?.message?.content?.trim() || fallbackInsight;
+
+        return res.json({
+          ok: true,
+          source: "openai",
+          insight,
+          context,
+          timestamp: Date.now()
+        });
+      } catch (aiError) {
+        console.error("AI insight generation failed, using fallback:", aiError.message);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      source: "fallback",
+      insight: fallbackInsight,
+      context,
+      timestamp: Date.now()
+    });
+  } catch (error) {
+    console.error("AI insight route error:", error);
+    return res.status(500).json({
+      ok: false,
+      insight: "SignalDesk could not generate an insight right now.",
+      error: error.message
+    });
+  }
+});
+

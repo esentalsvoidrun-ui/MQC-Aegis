@@ -38,22 +38,22 @@ function clamp(n, min, max) {
 }
 
 function uniq(arr) {
-  return [...new Set((arr || []).filter(Boolean))];
+  return [...new Set(arr.filter(Boolean))];
 }
 
 function broadcast(type, payload) {
   if (!wss) return;
   const msg = JSON.stringify({ type, payload });
-  for (const client of wss.clients) {
+  wss.clients.forEach((client) => {
     if (client.readyState === 1) client.send(msg);
-  }
+  });
 }
 
 function computeFingerprint(event) {
   return [
     event.type || "unknown",
     event.user || "anonymous",
-    event.ip || "unknown",
+    event.ip || "no-ip",
     event.geoMismatch ? "geo1" : "geo0",
     event.velocitySpike ? "vel1" : "vel0",
     safeNum(event.amount, 0) >= 5000 ? "amt_hi" : "amt_lo"
@@ -81,10 +81,11 @@ function pickHigherSeverity(a, b) {
 function getRecommendedAction(score, correlationLabel, trendLabel) {
   if (correlationLabel === "multi_signal_attack") return "block";
   if (correlationLabel === "payment_takeover_pattern") return "block";
-  if (score >= 85) return "block";
   if (correlationLabel === "cross_signal_escalation") return "manual_review";
+  if (score >= 85) return "block";
   if (score >= 65) return "manual_review";
-  if (trendLabel === "surge" || trendLabel === "spike") return "rate_limit";
+  if (trendLabel === "surge") return "rate_limit";
+  if (trendLabel === "spike") return "rate_limit";
   return "log";
 }
 
@@ -138,7 +139,7 @@ function rememberUserEvent(event) {
 
 function detectCorrelation(event, recentUserEvents) {
   const reasonCodes = [];
-  let correlationLabel = "none";
+  let label = "none";
 
   const risk = safeNum(event.risk, 0);
   const amount = safeNum(event.amount, 0);
@@ -155,15 +156,15 @@ function detectCorrelation(event, recentUserEvents) {
   const recentTypes = new Set(recentUserEvents.map((e) => e.type));
 
   if (event.type === "login" && event.velocitySpike && unseenIp) {
-    correlationLabel = "multi_signal_attack";
+    label = "multi_signal_attack";
   }
 
   if (event.type === "payment" && amount >= 5000 && event.geoMismatch) {
-    correlationLabel = "payment_takeover_pattern";
+    label = "payment_takeover_pattern";
   }
 
   if (recentCount >= 3 && recentHighRiskCount >= 2 && recentTypes.size >= 2) {
-    correlationLabel = "cross_signal_escalation";
+    label = "cross_signal_escalation";
     reasonCodes.push("MULTI_EVENT_CLUSTER");
   }
 
@@ -172,7 +173,7 @@ function detectCorrelation(event, recentUserEvents) {
   }
 
   return {
-    correlationLabel,
+    correlationLabel: label,
     reasonCodes: uniq(reasonCodes)
   };
 }
@@ -217,7 +218,9 @@ function shouldCreateAction(incidentId, action) {
   const last = actionCooldown.get(key);
   const now = nowMs();
 
-  if (last && now - last < 60 * 1000) return false;
+  if (last && now - last < 60 * 1000) {
+    return false;
+  }
 
   actionCooldown.set(key, now);
   return true;
@@ -310,11 +313,7 @@ async function loadRecentStateFromDb() {
       ip: row.ip,
       amount: row.amount,
       reasonCodes: (() => {
-        try {
-          return JSON.parse(row.reasonCodes || "[]");
-        } catch {
-          return [];
-        }
+        try { return JSON.parse(row.reasonCodes || "[]"); } catch { return []; }
       })(),
       correlationLabel: row.correlationLabel,
       trendLabel: row.trendLabel,
@@ -442,142 +441,33 @@ async function persistAction(action) {
 
 function resortIncidentStore() {
   incidentStore.sort((a, b) => {
-    const sevDiff = severityRank(b.severity) - severityRank(a.severity);
-    if (sevDiff !== 0) return sevDiff;
+    const sev = severityRank(b.severity) - severityRank(a.severity);
+    if (sev !== 0) return sev;
     return new Date(b.lastSeenAt || b.createdAt).getTime() - new Date(a.lastSeenAt || a.createdAt).getTime();
   });
-
   if (incidentStore.length > 100) incidentStore.length = 100;
 }
 
-function summarizeSignalCounts(incidents) {
-  const counts = new Map();
+function buildAiSummary() {
+  const recent = incidentStore.slice(0, 8);
+  const critical = recent.filter((i) => i.severity === "critical").length;
+  const mergedHot = recent.filter((i) => (i.hitCount || 1) >= 3).length;
+  const blocked = actionStore.filter((a) => a.action === "block").slice(0, 8).length;
 
-  for (const incident of incidents) {
-    for (const code of incident.reasonCodes || []) {
-      counts.set(code, (counts.get(code) || 0) + 1);
-    }
-    if (incident.correlationLabel && incident.correlationLabel !== "none") {
-      counts.set(incident.correlationLabel, (counts.get(incident.correlationLabel) || 0) + 1);
-    }
-    if (incident.trendLabel && incident.trendLabel !== "normal") {
-      counts.set(`trend:${incident.trendLabel}`, (counts.get(`trend:${incident.trendLabel}`) || 0) + 1);
-    }
+  if (critical >= 2 && mergedHot >= 1) {
+    return "Correlated hostile activity is persisting across repeated hits. Recommended posture: keep blocks in place and investigate the merged incident chain.";
   }
-
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([signal, count]) => ({ signal, count }));
-}
-
-function buildRiskTimeline() {
-  return incidentStore
-    .slice(0, 10)
-    .map((i) => ({
-      id: i.id,
-      label: `${i.type}:${i.user}`.slice(0, 18),
-      riskScore: i.riskScore,
-      severity: i.severity
-    }))
-    .reverse();
-}
-
-function buildInsightPayload() {
-  const recentIncidents = incidentStore.slice(0, 8);
-  const recentActions = actionStore.slice(0, 8);
-  const criticalCount = recentIncidents.filter((i) => i.severity === "critical").length;
-  const highCount = recentIncidents.filter((i) => i.severity === "high").length;
-  const mergedHot = recentIncidents.filter((i) => safeNum(i.hitCount, 1) >= 3).length;
-  const blockCount = recentActions.filter((a) => a.action === "block").length;
-  const reviewCount = recentActions.filter((a) => a.action === "manual_review").length;
-  const rateLimitCount = recentActions.filter((a) => a.action === "rate_limit").length;
-  const lead = recentIncidents[0];
-
-  let summary = "System posture is stable. No dominant repeated attack chain is currently controlling the board.";
-  let whatChanged = "No meaningful escalation has displaced the current baseline.";
-  let whyItMatters = "The decision engine is seeing routine noise rather than coordinated hostile behavior.";
-  let recommendedNextAction = "monitor";
-
-  if (lead?.correlationLabel === "multi_signal_attack") {
-    summary = "Correlated hostile login behavior is active. The engine is linking repeated signals into a probable account abuse pattern.";
-    whatChanged = "Velocity spikes and unseen IP activity aligned into a multi-signal attack chain.";
-    whyItMatters = "This pattern points to account compromise risk rather than harmless login noise.";
-    recommendedNextAction = "block";
-  } else if (lead?.correlationLabel === "payment_takeover_pattern") {
-    summary = "Payment-side risk is elevated. High-value activity and environmental mismatch suggest takeover pressure.";
-    whatChanged = "Suspicious payment behavior clustered with elevated transaction risk.";
-    whyItMatters = "Financial abuse can move from anomaly to loss very fast once this pattern appears.";
-    recommendedNextAction = "block";
-  } else if (criticalCount >= 2 && mergedHot >= 1) {
-    summary = "Correlated hostile activity is persisting across repeated hits. Merged incidents show the same chain is still alive.";
-    whatChanged = "Repeated high-severity events continued hitting the same attack fingerprints.";
-    whyItMatters = "Persistence matters more than a single spike. A living pattern usually means an active adversary or broken control.";
-    recommendedNextAction = "block";
-  } else if (criticalCount >= 1 || blockCount >= 1) {
-    summary = "High-risk activity remains active on the board. Immediate containment posture is justified.";
-    whatChanged = "At least one critical incident crossed the decision threshold and triggered strong action.";
-    whyItMatters = "Once the engine is blocking traffic, you are past observation and into containment.";
-    recommendedNextAction = "manual_review";
-  } else if (highCount >= 2 || reviewCount >= 2) {
-    summary = "Risk is climbing across several incidents. The board is not in crisis, but it is no longer quiet.";
-    whatChanged = "Multiple high-risk cases accumulated within the recent window.";
-    whyItMatters = "Clusters of high-risk signals often precede critical incidents if left untreated.";
-    recommendedNextAction = "manual_review";
-  } else if (rateLimitCount >= 1) {
-    summary = "Traffic pressure is elevated. The engine is seeing noisy behavior but not full compromise.";
-    whatChanged = "Spike or surge conditions caused rate limiting to enter the action stream.";
-    whyItMatters = "Pressure events can be the prelude to broader abuse, especially if they repeat.";
-    recommendedNextAction = "rate_limit";
+  if (critical >= 1 || blocked >= 1) {
+    return "High-risk activity remains active on the board. Recommended posture: contain aggressive flows and review linked identities.";
   }
-
-  return {
-    ok: true,
-    level: 7,
-    summary,
-    whatChanged,
-    whyItMatters,
-    recommendedNextAction,
-    topSignals: summarizeSignalCounts(recentIncidents),
-    metrics: {
-      criticalCount,
-      highCount,
-      mergedHot,
-      blockCount,
-      reviewCount,
-      rateLimitCount,
-      openIncidents: incidentStore.length
-    },
-    riskTimeline: buildRiskTimeline(),
-    leadIncident: lead || null
-  };
-}
-
-function getIncidentById(id) {
-  return incidentStore.find((i) => String(i.id) === String(id)) || null;
-}
-
-function buildIncidentDetail(id) {
-  const incident = getIncidentById(id);
-  if (!incident) return null;
-
-  const relatedEvents = eventStore
-    .filter((e) => e.user === incident.user)
-    .slice(0, 12);
-
-  const relatedActions = actionStore
-    .filter((a) => String(a.incidentId) === String(incident.id))
-    .slice(0, 12);
-
-  return {
-    incident,
-    relatedEvents,
-    relatedActions
-  };
+  if (mergedHot >= 2) {
+    return "Repeated suspicious activity is clustering into persistent incident patterns. Recommended posture: monitor merged cases and escalate if risk climbs further.";
+  }
+  return "System posture is stable. No dominant repeated attack chain is currently controlling the board.";
 }
 
 app.get("/health", (req, res) => {
-  res.json({ ok: true, service: "SignalDesk", ws: true, time: nowIso(), level: 7 });
+  res.json({ ok: true, service: "SignalDesk", ws: true, time: nowIso(), level: 5 });
 });
 
 app.get("/api/incidents", (req, res) => {
@@ -589,54 +479,12 @@ app.get("/api/actions", (req, res) => {
 });
 
 app.get("/api/summary", (req, res) => {
-  res.json(buildInsightPayload());
-});
-
-app.get("/api/incidents/:id", (req, res) => {
-  const detail = buildIncidentDetail(req.params.id);
-  if (!detail) {
-    return res.status(404).json({ ok: false, error: "Incident not found" });
-  }
-  res.json({ ok: true, ...detail });
-});
-
-app.post("/api/incidents/:id/status", async (req, res) => {
-  try {
-    const incident = getIncidentById(req.params.id);
-    if (!incident) {
-      return res.status(404).json({ ok: false, error: "Incident not found" });
-    }
-
-    const nextStatus = req.body.status;
-    if (!["pending_review", "active_threat", "acknowledged", "resolved", "closed"].includes(nextStatus)) {
-      return res.status(400).json({ ok: false, error: "Invalid status" });
-    }
-
-    incident.status = nextStatus;
-    incident.lastSeenAt = nowIso();
-
-    await updateIncidentRecord(incident);
-
-    const actionRecord = {
-      incidentId: incident.id,
-      action: nextStatus === "resolved" || nextStatus === "closed" ? "resolve" : "acknowledge",
-      reason: `status:${nextStatus}`,
-      createdAt: nowIso()
-    };
-
-    await persistAction(actionRecord);
-    actionStore.unshift(actionRecord);
-    if (actionStore.length > 100) actionStore.length = 100;
-
-    broadcast("incident_updated", incident);
-    broadcast("action", actionRecord);
-    broadcast("summary", buildInsightPayload());
-
-    res.json({ ok: true, incident, action: actionRecord });
-  } catch (error) {
-    console.error("POST /api/incidents/:id/status failed:", error);
-    res.status(500).json({ ok: false, error: error.message });
-  }
+  res.json({
+    ok: true,
+    summary: buildAiSummary(),
+    recommendation:
+      incidentStore[0]?.action || "monitor"
+  });
 });
 
 app.post("/event", async (req, res) => {
@@ -678,21 +526,16 @@ app.post("/event", async (req, res) => {
         existing.hitCount = safeNum(existing.hitCount, 1) + 1;
         existing.merged = true;
         existing.lastSeenAt = nowIso();
-        existing.riskScore = Math.max(safeNum(existing.riskScore, 0), riskScore);
+        existing.riskScore = Math.max(existing.riskScore || 0, riskScore);
         existing.severity = pickHigherSeverity(existing.severity || "low", severity);
         existing.action = strongerAction(existing.action || "log", action);
         existing.reasonCodes = uniq([...(existing.reasonCodes || []), ...reasonCodes]);
-
-        if (existing.correlationLabel === "none" && correlationLabel !== "none") {
-          existing.correlationLabel = correlationLabel;
-        }
-
-        if (trendLabel === "surge") {
-          existing.trendLabel = "surge";
-        } else if (!existing.trendLabel) {
-          existing.trendLabel = trendLabel;
-        }
-
+        existing.correlationLabel =
+          existing.correlationLabel !== "none" ? existing.correlationLabel : correlationLabel;
+        existing.trendLabel =
+          existing.trendLabel === "surge" || trendLabel !== "surge"
+            ? existing.trendLabel
+            : trendLabel;
         existing.amount = Math.max(safeNum(existing.amount, 0), safeNum(event.amount, 0));
         existing.ip = event.ip || existing.ip;
         existing.status = severityRank(existing.severity) >= 4 ? "active_threat" : "pending_review";
@@ -702,6 +545,7 @@ app.post("/event", async (req, res) => {
 
         incident = existing;
         incidentMerged = true;
+
         broadcast("incident_updated", incident);
 
         if (shouldCreateAction(existing.id, existing.action)) {
@@ -753,8 +597,8 @@ app.post("/event", async (req, res) => {
               correlationLabel !== "none"
                 ? correlationLabel
                 : trendLabel !== "normal"
-                  ? trendLabel
-                  : severity,
+                ? trendLabel
+                : severity,
             createdAt: nowIso()
           };
 
@@ -765,9 +609,6 @@ app.post("/event", async (req, res) => {
         }
       }
     }
-
-    const insightPayload = buildInsightPayload();
-    broadcast("summary", insightPayload);
 
     broadcast("event", {
       ...event,
@@ -786,7 +627,6 @@ app.post("/event", async (req, res) => {
       incidentMerged,
       incident,
       action: actionRecord,
-      insights: insightPayload,
       derived: {
         riskScore,
         severity,
@@ -802,17 +642,16 @@ app.post("/event", async (req, res) => {
   }
 });
 
-const server = http.createServer(app);
-wss = new WebSocketServer({ server });
-
-wss.on("connection", (ws) => {
-  ws.send(
+const wsUrl = "ws://localhost:3000";
+  location.protocol === "https:"
+    ? `wss://${location.host}`
+    : `ws://${location.host}`;
     JSON.stringify({
       type: "bootstrap",
       payload: {
         incidents: incidentStore.slice(0, 10),
         actions: actionStore.slice(0, 10),
-        summary: buildInsightPayload()
+        summary: buildAiSummary()
       }
     })
   );

@@ -1,0 +1,466 @@
+import http from "http";
+import express from "express";
+import { WebSocketServer } from "ws";
+import sqlite3 from "sqlite3";
+import { open } from "sqlite";
+
+const app = express();
+app.use(express.json());
+app.use(express.static("public_dashboard"));
+
+const PORT = process.env.PORT || 3000;
+
+let db;
+let wss;
+
+const eventStore = [];
+const incidentStore = [];
+const actionStore = [];
+const trendStore = new Map();
+const alertCooldown = new Map();
+const userHistory = new Map();
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function safeNum(v, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function broadcast(type, payload) {
+  if (!wss) return;
+  const msg = JSON.stringify({ type, payload });
+  wss.clients.forEach((client) => {
+    if (client.readyState === 1) client.send(msg);
+  });
+}
+
+function computeFingerprint(event) {
+  return [
+    event.type || "unknown",
+    event.user || "anonymous",
+    event.ip || "no-ip",
+    event.geoMismatch ? "geo1" : "geo0",
+    event.velocitySpike ? "vel1" : "vel0"
+  ].join("|");
+}
+
+function getSeverity(score) {
+  if (score >= 85) return "critical";
+  if (score >= 65) return "high";
+  if (score >= 40) return "medium";
+  return "low";
+}
+
+function getRecommendedAction(score, correlationLabel, trendLabel) {
+  if (correlationLabel === "multi_signal_attack") return "block";
+  if (score >= 85) return "block";
+  if (score >= 65) return "manual_review";
+  if (trendLabel === "spike") return "rate_limit";
+  return "log";
+}
+
+function updateTrend(event) {
+  const bucket = trendStore.get(event.type) || {
+    count: 0,
+    totalRisk: 0,
+    lastAt: Date.now()
+  };
+
+  bucket.count += 1;
+  bucket.totalRisk += safeNum(event.risk, 0);
+  bucket.lastAt = Date.now();
+
+  trendStore.set(event.type, bucket);
+
+  const avgRisk = bucket.totalRisk / bucket.count;
+
+  if (bucket.count >= 8 && avgRisk >= 50) return "surge";
+  if (bucket.count >= 4 || avgRisk >= 35 || event.velocitySpike) return "spike";
+  return "normal";
+}
+
+function rememberUserEvent(event) {
+  const key = event.user || "anonymous";
+  const history = userHistory.get(key) || [];
+  history.push({
+    type: event.type,
+    risk: safeNum(event.risk, 0),
+    amount: safeNum(event.amount, 0),
+    ip: event.ip || "unknown",
+    geoMismatch: !!event.geoMismatch,
+    velocitySpike: !!event.velocitySpike,
+    createdAt: Date.now()
+  });
+
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  const trimmed = history.filter((e) => e.createdAt >= cutoff);
+  userHistory.set(key, trimmed);
+  return trimmed;
+}
+
+function detectCorrelation(event, recentUserEvents) {
+  const reasonCodes = [];
+  let label = "none";
+
+  const risk = safeNum(event.risk, 0);
+  const amount = safeNum(event.amount, 0);
+  const unseenIp = !event.ip || event.ip === "unknown";
+
+  if (risk >= 85) reasonCodes.push("RISK_OVER_85");
+  if (event.velocitySpike) reasonCodes.push("VELOCITY_SPIKE");
+  if (event.geoMismatch) reasonCodes.push("GEO_MISMATCH");
+  if (unseenIp) reasonCodes.push("UNSEEN_IP");
+  if (amount >= 5000) reasonCodes.push("HIGH_AMOUNT");
+
+  const recentCount = recentUserEvents.length;
+  const recentHighRiskCount = recentUserEvents.filter((e) => e.risk >= 70).length;
+  const recentTypes = new Set(recentUserEvents.map((e) => e.type));
+
+  if (
+    event.type === "login" &&
+    event.velocitySpike &&
+    unseenIp
+  ) {
+    label = "multi_signal_attack";
+  }
+
+  if (
+    event.type === "payment" &&
+    amount >= 5000 &&
+    event.geoMismatch
+  ) {
+    label = "payment_takeover_pattern";
+  }
+
+  if (
+    recentCount >= 3 &&
+    recentHighRiskCount >= 2 &&
+    recentTypes.size >= 2
+  ) {
+    label = "cross_signal_escalation";
+    reasonCodes.push("MULTI_EVENT_CLUSTER");
+  }
+
+  if (recentCount >= 4) {
+    reasonCodes.push("REPEATED_ACTIVITY");
+  }
+
+  return {
+    correlationLabel: label,
+    reasonCodes: [...new Set(reasonCodes)]
+  };
+}
+
+function buildRiskScore(event, correlationLabel, trendLabel, recentUserEvents) {
+  let score = safeNum(event.risk, 0);
+
+  if (event.velocitySpike) score += 20;
+  if (event.geoMismatch) score += 18;
+  if ((event.ip || "unknown") === "unknown") score += 12;
+  if (event.type === "payment" && safeNum(event.amount, 0) >= 5000) score += 25;
+  if (event.type === "login" && safeNum(event.attempts, 0) >= 5) score += 15;
+
+  if (trendLabel === "spike") score += 10;
+  if (trendLabel === "surge") score += 18;
+
+  if (correlationLabel === "multi_signal_attack") score += 30;
+  if (correlationLabel === "payment_takeover_pattern") score += 28;
+  if (correlationLabel === "cross_signal_escalation") score += 22;
+
+  if (recentUserEvents.length >= 3) score += 10;
+
+  return clamp(score, 0, 99);
+}
+
+function shouldCreateIncident(event, riskScore, correlationLabel, trendLabel) {
+  if (correlationLabel !== "none") return true;
+  if (trendLabel !== "normal" && riskScore >= 55) return true;
+  if (riskScore >= 65) return true;
+  if (event.type === "payment" && safeNum(event.amount, 0) >= 5000) return true;
+  return false;
+}
+
+function shouldCooldown(fingerprint) {
+  const last = alertCooldown.get(fingerprint);
+  const now = Date.now();
+  if (last && now - last < 45 * 1000) return true;
+  alertCooldown.set(fingerprint, now);
+  return false;
+}
+
+async function initDb() {
+  db = await open({
+    filename: "./signaldesk.db",
+    driver: sqlite3.Database
+  });
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT,
+      user TEXT,
+      amount REAL,
+      attempts INTEGER,
+      ip TEXT,
+      risk INTEGER,
+      geoMismatch INTEGER,
+      velocitySpike INTEGER,
+      createdAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS incidents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT,
+      user TEXT,
+      riskScore INTEGER,
+      severity TEXT,
+      action TEXT,
+      status TEXT,
+      ip TEXT,
+      amount REAL,
+      reasonCodes TEXT,
+      correlationLabel TEXT,
+      trendLabel TEXT,
+      fingerprint TEXT,
+      createdAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS actions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      incidentId INTEGER,
+      action TEXT,
+      reason TEXT,
+      createdAt TEXT
+    );
+  `);
+}
+
+async function persistEvent(event) {
+  await db.run(
+    `INSERT INTO events (type, user, amount, attempts, ip, risk, geoMismatch, velocitySpike, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      event.type || "unknown",
+      event.user || "anonymous",
+      safeNum(event.amount, 0),
+      safeNum(event.attempts, 0),
+      event.ip || "unknown",
+      safeNum(event.risk, 0),
+      event.geoMismatch ? 1 : 0,
+      event.velocitySpike ? 1 : 0,
+      event.createdAt
+    ]
+  );
+}
+
+async function persistIncident(incident) {
+  const result = await db.run(
+    `INSERT INTO incidents
+      (type, user, riskScore, severity, action, status, ip, amount, reasonCodes, correlationLabel, trendLabel, fingerprint, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      incident.type,
+      incident.user,
+      incident.riskScore,
+      incident.severity,
+      incident.action,
+      incident.status,
+      incident.ip,
+      incident.amount,
+      JSON.stringify(incident.reasonCodes),
+      incident.correlationLabel,
+      incident.trendLabel,
+      incident.fingerprint,
+      incident.createdAt
+    ]
+  );
+
+  incident.id = result.lastID;
+  return incident;
+}
+
+async function persistAction(action) {
+  const result = await db.run(
+    `INSERT INTO actions (incidentId, action, reason, createdAt)
+     VALUES (?, ?, ?, ?)`,
+    [action.incidentId, action.action, action.reason, action.createdAt]
+  );
+
+  action.id = result.lastID;
+  return action;
+}
+
+function buildAiSummary() {
+  const recentIncidents = incidentStore.slice(0, 8);
+  const critical = recentIncidents.filter((i) => i.severity === "critical").length;
+  const high = recentIncidents.filter((i) => i.severity === "high").length;
+  const blocked = actionStore.filter((a) => a.action === "block").slice(0, 8).length;
+  const rateLimited = actionStore.filter((a) => a.action === "rate_limit").slice(0, 8).length;
+
+  if (critical >= 2) {
+    return "Risk remains elevated across correlated attack signals. Recommended posture: block hostile flows and manually review exposed identities.";
+  }
+  if (high >= 2 || blocked >= 1) {
+    return "Multiple high-risk signals are active. Recommended posture: maintain review pressure and contain suspicious sessions before escalation.";
+  }
+  if (rateLimited >= 1) {
+    return "Traffic patterns show anomalous pressure. Recommended posture: rate-limit noisy actors while monitoring for cross-signal escalation.";
+  }
+  return "System posture is stable. No meaningful multi-signal attack chain is currently dominating the board.";
+}
+
+app.get("/health", (req, res) => {
+  res.json({ ok: true, service: "SignalDesk", ws: true, time: nowIso() });
+});
+
+app.get("/api/incidents", (req, res) => {
+  res.json(incidentStore);
+});
+
+app.get("/api/actions", (req, res) => {
+  res.json(actionStore);
+});
+
+app.get("/api/summary", (req, res) => {
+  res.json({
+    ok: true,
+    summary: buildAiSummary(),
+    recommendation:
+      incidentStore[0]?.severity === "critical"
+        ? "block"
+        : incidentStore[0]?.severity === "high"
+        ? "manual_review"
+        : "monitor"
+  });
+});
+
+app.post("/event", async (req, res) => {
+  try {
+    const event = {
+      type: req.body.type || "unknown",
+      user: req.body.user || "anonymous",
+      attempts: safeNum(req.body.attempts, 0),
+      amount: safeNum(req.body.amount, 0),
+      ip: req.body.ip || "unknown",
+      risk: safeNum(req.body.risk, 0),
+      geoMismatch: !!req.body.geoMismatch,
+      velocitySpike: !!req.body.velocitySpike,
+      createdAt: nowIso()
+    };
+
+    eventStore.unshift(event);
+    if (eventStore.length > 250) eventStore.length = 250;
+
+    await persistEvent(event);
+
+    const recentUserEvents = rememberUserEvent(event);
+    const trendLabel = updateTrend(event);
+    const { correlationLabel, reasonCodes } = detectCorrelation(event, recentUserEvents);
+    const riskScore = buildRiskScore(event, correlationLabel, trendLabel, recentUserEvents);
+    const severity = getSeverity(riskScore);
+    const action = getRecommendedAction(riskScore, correlationLabel, trendLabel);
+    const fingerprint = computeFingerprint(event);
+
+    let incidentCreated = false;
+    let incident = null;
+    let actionRecord = null;
+
+    if (shouldCreateIncident(event, riskScore, correlationLabel, trendLabel) && !shouldCooldown(fingerprint)) {
+      incident = {
+        type: event.type,
+        user: event.user,
+        riskScore,
+        severity,
+        action,
+        status: "pending_review",
+        ip: event.ip,
+        amount: event.amount,
+        reasonCodes,
+        correlationLabel,
+        trendLabel,
+        fingerprint,
+        createdAt: nowIso()
+      };
+
+      await persistIncident(incident);
+      incidentStore.unshift(incident);
+      if (incidentStore.length > 100) incidentStore.length = 100;
+      incidentCreated = true;
+
+      actionRecord = {
+        incidentId: incident.id,
+        action,
+        reason:
+          correlationLabel !== "none"
+            ? correlationLabel
+            : trendLabel !== "normal"
+            ? trendLabel
+            : severity,
+        createdAt: nowIso()
+      };
+
+      await persistAction(actionRecord);
+      actionStore.unshift(actionRecord);
+      if (actionStore.length > 100) actionStore.length = 100;
+
+      broadcast("incident", incident);
+      broadcast("action", actionRecord);
+    }
+
+    broadcast("event", {
+      ...event,
+      riskScore,
+      severity,
+      correlationLabel,
+      trendLabel,
+      action
+    });
+
+    res.json({
+      ok: true,
+      event,
+      incidentCreated,
+      incident,
+      action: actionRecord,
+      derived: {
+        riskScore,
+        severity,
+        correlationLabel,
+        trendLabel,
+        recommendedAction: action
+      }
+    });
+  } catch (error) {
+    console.error("POST /event failed:", error);
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+const server = http.createServer(app);
+wss = new WebSocketServer({ server });
+
+wss.on("connection", (ws) => {
+  ws.send(
+    JSON.stringify({
+      type: "bootstrap",
+      payload: {
+        incidents: incidentStore.slice(0, 10),
+        actions: actionStore.slice(0, 10),
+        summary: buildAiSummary()
+      }
+    })
+  );
+});
+
+await initDb();
+
+server.listen(PORT, () => {
+  console.log(`SignalDesk listening on http://localhost:${PORT}`);
+});

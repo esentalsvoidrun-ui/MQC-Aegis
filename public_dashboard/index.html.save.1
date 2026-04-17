@@ -1,0 +1,29 @@
+<script>
+  function addIncident(item) {
+    const el = document.createElement("div");
+    el.className = "incident-card";
+
+    const anomalyBadge = item.trendAnomaly
+      ? `<div class="incident-badge">Trend ${item.trendAnomaly.level}</div>`
+      : "";
+
+    const baselineLine = item.trend
+      ? `<div>baseline risk ${item.trend.avgRisk} · recent events ${item.trend.recentTimestamps.length}</div>`
+      : "";
+
+    const anomalyLine = item.trendAnomaly
+      ? `<div>${item.trendAnomaly.reason}</div>`
+      : "";
+
+    el.innerHTML = `
+      <strong>${item.type}</strong>
+      ${anomalyBadge}
+      <div>${item.severity} · risk ${item.riskScore}</div>
+      <div>${item.action}</div>
+      ${baselineLine}
+      ${anomalyLine}
+    `;
+
+    incidentPanel.prepend(el);
+  }
+</script>

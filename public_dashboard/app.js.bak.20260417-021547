@@ -1,0 +1,337 @@
+let token = localStorage.getItem("token") || "";
+
+function setStatus(text) {
+  const aiEl = document.getElementById("aiInsight");
+  if (el) el.textContent = text;
+}
+
+async function registerUser() {
+  setStatus("Registering...");
+
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+
+  try {
+    const res = await fetch("/api/register", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ email, password })
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Register failed");
+
+    setStatus("Registered. You can now login.");
+  } catch (err) {
+    setStatus("Register error: " + err.message);
+  }
+}
+
+async function loginUser() {
+  setStatus("Logging in...");
+
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+
+  try {
+    const res = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password })
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Login failed");
+
+    token = data.token;
+    localStorage.setItem("token", token);
+    setStatus("Logged in");
+    await loadInsights();
+  } catch (err) {
+    setStatus("Login error: " + err.message);
+  }
+}
+
+async function loadInsights() {
+  const insightEl = document.getElementById("insight");
+  const riskEl = document.getElementById("risk");
+  const actionEl = document.getElementById("action");
+  const confidenceEl = document.getElementById("confidence");
+  const signalsEl = document.getElementById("signals");
+  const humanLayerEl = document.getElementById("humanLayer");
+  const btn = document.getElementById("analyzeBtn");
+const aiEl = document.getElementById("aiInsight");
+aiEl.textContent = data.aiInsight || "";
+  if (!token) {
+    insightEl.textContent = "Login required";
+    riskEl.textContent = "-";
+    actionEl.textContent = "Please register or log in.";
+    confidenceEl.textContent = "-";
+    signalsEl.textContent = "-";
+    humanLayerEl.textContent = "-";
+    riskEl.className = "";
+aiEl.textContent = data.aiInsight || "";
+    return;
+  }
+
+  btn.textContent = "Analyzing...";
+  insightEl.textContent = "Loading...";
+  riskEl.textContent = "-";
+  actionEl.textContent = "-";
+  confidenceEl.textContent = "-";
+  signalsEl.textContent = "-";
+  humanLayerEl.textContent = "-";
+  riskEl.className = "";
+
+  try {
+    const res = await fetch("/analyze", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": token
+      },
+      body: JSON.stringify({
+        users: Number(document.getElementById("users").value),
+        revenue: Number(document.getElementById("revenue").value),
+        sessions: Number(document.getElementById("sessions").value),
+        churn: Number(document.getElementById("churn").value)
+      })
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to load insights");
+
+    insightEl.textContent = data.insight || "No insight";
+    riskEl.textContent = data.risk || "No risk";
+    actionEl.textContent = data.action || "No action";
+    confidenceEl.textContent =
+      typeof data.confidence === "number" ? data.confidence + "%" : "-";
+
+        if (Array.isArray(data.signals) && data.signals.length > 0) {
+      signalsEl.textContent = data.signals.join(" • ");
+    } else if (Array.isArray(data.warnings) && data.warnings.length > 0) {
+      signalsEl.textContent = data.warnings.join(" • ");
+    } else if (Array.isArray(data.positives) && data.positives.length > 0) {
+      signalsEl.textContent = data.positives.join(" • ");
+    } else {
+      signalsEl.textContent = "No major signals detected";
+    }
+
+    if (data.risk === "LOW") riskEl.className = "risk-low";
+    if (data.risk === "MEDIUM") riskEl.className = "risk-medium";
+    if (data.risk === "HIGH") riskEl.className = "risk-high";
+
+    const humanBits = [];
+    if (Array.isArray(data.positives) && data.positives.length) {
+      humanBits.push("Strengths: " + data.positives.join(", "));
+    }
+    if (Array.isArray(data.warnings) && data.warnings.length) {
+      humanBits.push("Warnings: " + data.warnings.join(", "));
+    }
+
+    humanLayerEl.textContent = humanBits.length
+      ? humanBits.join(" | ")
+      : "Small early signals are often the ones worth respecting.";
+  } catch (err) {
+    insightEl.textContent = "Failed to load AI insights";
+    riskEl.textContent = "ERROR";
+    actionEl.textContent = err.message;
+    confidenceEl.textContent = "-";
+    signalsEl.textContent = "-";
+    humanLayerEl.textContent = "Kontrollen tappades, men inte bygget.";
+    riskEl.className = "risk-high";
+  } finally {
+    btn.textContent = "Analyze";
+  }
+}
+
+window.registerUser = registerUser;
+window.loginUser = loginUser;
+window.loadInsights = loadInsights;
+
+document.addEventListener("DOMContentLoaded", async () => {
+  if (token) {
+    setStatus("Logged in");
+  } else {
+    setStatus("Not logged in");
+  }
+});
+let selectedCaseId = null;
+
+async function postCaseAction(action) {
+  if (!selectedCaseId) {
+    alert("Select a case first");
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/cases/${selectedCaseId}/action`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        action,
+        operator: "robert"
+      })
+    });
+
+    const data = await res.json();
+
+    if (!data.ok) {
+      throw new Error(data.error || "Action failed");
+    }
+
+    console.log("Case action updated:", data);
+  } catch (err) {
+    console.error(err);
+    alert("Action failed: " + err.message);
+  }
+}
+
+function wireCaseActionButtons() {
+  document.querySelectorAll(".action-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const action = btn.dataset.action;
+      postCaseAction(action);
+    });
+  });
+}
+
+function wireQueueSelection() {
+  document.querySelectorAll("[data-case-id]").forEach((row) => {
+    row.addEventListener("click", () => {
+      selectedCaseId = row.dataset.caseId;
+      console.log("Selected case:", selectedCaseId);
+
+      document.querySelectorAll("[data-case-id]").forEach((el) => {
+        el.classList.remove("selected-case");
+      });
+
+      row.classList.add("selected-case");
+    });
+  });
+}
+
+function patchWsCaseUpdates() {
+  const OriginalWebSocket = window.WebSocket;
+
+  window.WebSocket = function (...args) {
+    const socket = new OriginalWebSocket(...args);
+
+    socket.addEventListener("message", (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+
+        if (msg.type === "case_updated") {
+          console.log("Live case update:", msg.data);
+          setTimeout(() => window.location.reload(), 300);
+        }
+
+        if (msg.type === "actions_updated") {
+          console.log("Live actions update");
+        }
+
+        if (msg.type === "incidents_updated") {
+          console.log("Live incidents update");
+        }
+      } catch (e) {
+        console.error("WS parse error", e);
+      }
+    });
+
+    return socket;
+  };
+
+  window.WebSocket.prototype = OriginalWebSocket.prototype;
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  patchWsCaseUpdates();
+  wireCaseActionButtons();
+  wireQueueSelection();
+});
+
+// ===== Case action controls =====
+window.selectedCaseId = null;
+
+function bindQueueRows() {
+  const rows = document.querySelectorAll("[data-case-id]");
+
+  rows.forEach((row) => {
+    row.onclick = () => {
+      window.selectedCaseId = row.dataset.caseId;
+      console.log("Selected case:", window.selectedCaseId);
+
+      rows.forEach((r) => r.classList.remove("selected-case"));
+      row.classList.add("selected-case");
+    };
+  });
+}
+
+async function sendCaseAction(action) {
+  window.selectedCaseId = null;
+
+function bindQueueRows() {
+  const rows = document.querySelectorAll("[data-case-id]");
+  rows.forEach((row) => {
+    row.onclick = () => {
+      window.selectedCaseId = row.dataset.caseId;
+      console.log("Selected case:", window.selectedCaseId);
+      rows.forEach((r) => r.classList.remove("selected-case"));
+      row.classList.add("selected-case");
+    };
+  });
+}
+
+window.sendCaseAction = async function (action) {
+  if (!window.selectedCaseId) {
+    alert("Välj ett case först.");
+    return;
+  }
+
+  console.log("Sending action:", action, "for case:", window.selectedCaseId);
+
+  try {
+    const res = await fetch(`/api/cases/${window.selectedCaseId}/action`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        action,
+        operator: "robert"
+      })
+    });
+
+    const data = await res.json();
+    console.log("API response:", data);
+
+    if (!data.ok) {
+      alert(data.error || "Action failed");
+      return;
+    }
+
+    window.location.reload();
+  } catch (err) {
+    console.error("sendCaseAction error:", err);
+    alert("Request failed");
+  }
+}
+
+function bindActionButtons() {
+  document.querySelectorAll(".action-btn").forEach((btn) => {
+    btn.onclick = () => {
+      const action = btn.dataset.action;
+      console.log("Clicked action:", action);
+      sendCaseAction(action);
+    };
+  });
+}
+
+window.addEventListener("load", () => {
+  bindQueueRows();
+  bindActionButtons();
+});

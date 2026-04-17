@@ -1,0 +1,694 @@
+import http from "http";
+import express from "express";
+import { WebSocketServer } from "ws";
+import sqlite3 from "sqlite3";
+import { open } from "sqlite";
+
+const app = express();
+app.use(express.json());
+app.use(express.static("public_dashboard"));
+
+const PORT = process.env.PORT || 3000;
+
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+
+let db;
+
+// -----------------------------
+// helpers
+// -----------------------------
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function normalizeUser(user) {
+  return String(user || "unknown-user").trim().toLowerCase();
+}
+
+function slugify(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function safeJsonParse(value, fallback = []) {
+  try {
+    return JSON.parse(value || JSON.stringify(fallback));
+  } catch {
+    return fallback;
+  }
+}
+
+function broadcast(event, payload) {
+  const message = JSON.stringify({ event, payload, at: nowIso() });
+  for (const client of wss.clients) {
+    if (client.readyState === 1) {
+      client.send(message);
+    }
+  }
+}
+
+function severityFromRiskScore(riskScore) {
+  if (riskScore >= 85) return "critical";
+  if (riskScore >= 60) return "high";
+  if (riskScore >= 40) return "medium";
+  return "low";
+}
+
+function actionFromSeverity(severity) {
+  if (severity === "critical") return "block";
+  if (severity === "high") return "manual_review";
+  if (severity === "medium") return "rate_limit";
+  return "log";
+}
+
+function titleFromAction(action) {
+  if (action === "block") return "Block account/session";
+  if (action === "manual_review") return "Manual review required";
+  if (action === "rate_limit") return "Rate-limit activity";
+  return "Log event only";
+}
+
+function computeTrendLabel(recentCount) {
+  if (recentCount >= 4) return "spike";
+  if (recentCount >= 2) return "elevated";
+  return "normal";
+}
+
+function makeCaseId(user, timestamp = Date.now()) {
+  const cleanUser = slugify(normalizeUser(user)) || "unknown-user";
+  return `CASE-${cleanUser}-${timestamp}`;
+}
+
+function inferCaseLabel(incident) {
+  if (incident.correlationLabel && incident.correlationLabel !== "none") {
+    return incident.correlationLabel;
+  }
+  if (incident.type === "payment") return "payment-linked escalation";
+  if (incident.reasonCodes?.includes("GEO_MISMATCH")) return "geo-linked escalation";
+  if (incident.reasonCodes?.includes("VELOCITY_SPIKE")) return "login anomaly chain";
+  return "multi-signal investigation";
+}
+
+function buildFingerprint(incident) {
+  const sortedReasons = [...incident.reasonCodes].sort().join("|");
+  return [
+    incident.type,
+    normalizeUser(incident.user),
+    incident.action,
+    incident.severity,
+    sortedReasons
+  ].join("::");
+}
+
+function buildAuditEntry(incidentId, type, details = {}) {
+  return {
+    id: `${incidentId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    type,
+    at: nowIso(),
+    details
+  };
+}
+
+// -----------------------------
+// db init
+// -----------------------------
+async function initDb() {
+  db = await open({
+    filename: "./signaldesk.db",
+    driver: sqlite3.Database
+  });
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS incidents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT,
+      user TEXT,
+      amount REAL DEFAULT 0,
+      ip TEXT,
+      risk INTEGER DEFAULT 0,
+      attempts INTEGER DEFAULT 0,
+      riskScore INTEGER DEFAULT 0,
+      severity TEXT,
+      action TEXT,
+      status TEXT,
+      assignedTo TEXT,
+      sla TEXT,
+      reasonCodes TEXT DEFAULT '[]',
+      correlationLabel TEXT DEFAULT 'none',
+      trendLabel TEXT DEFAULT 'normal',
+      fingerprint TEXT,
+      repeatCount INTEGER DEFAULT 1,
+      caseId TEXT,
+      caseLabel TEXT,
+      linkedIncidentIds TEXT DEFAULT '[]',
+      auditTrail TEXT DEFAULT '[]',
+      createdAt TEXT,
+      updatedAt TEXT,
+      lastSeenAt TEXT,
+      lastOperator TEXT
+    )
+  `);
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS actions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      incidentId INTEGER,
+      type TEXT,
+      status TEXT,
+      severity TEXT,
+      title TEXT,
+      user TEXT,
+      createdAt TEXT
+    )
+  `);
+}
+
+// -----------------------------
+// case flow helpers
+// -----------------------------
+async function findOpenCaseForUser(user) {
+  return await db.get(
+    `
+    SELECT caseId, caseLabel
+    FROM incidents
+    WHERE lower(user) = ?
+      AND status IN ('pending_review', 'open', 'triaged')
+      AND caseId IS NOT NULL
+    ORDER BY id DESC
+    LIMIT 1
+    `,
+    [normalizeUser(user)]
+  );
+}
+
+async function findLinkedIncidentIds(user, currentIncidentId) {
+  const rows = await db.all(
+    `
+    SELECT id
+    FROM incidents
+    WHERE lower(user) = ?
+      AND id != ?
+      AND status IN ('pending_review', 'open', 'triaged')
+    ORDER BY id ASC
+    `,
+    [normalizeUser(user), currentIncidentId]
+  );
+
+  return rows.map((r) => r.id);
+}
+
+async function assignCaseFlowToIncident(incident) {
+  const existingCase = await findOpenCaseForUser(incident.user);
+  const caseId = existingCase?.caseId || makeCaseId(incident.user);
+  const caseLabel = inferCaseLabel(incident);
+  const linkedIncidentIds = await findLinkedIncidentIds(incident.user, incident.id);
+
+  await db.run(
+    `
+    UPDATE incidents
+    SET caseId = ?, caseLabel = ?, linkedIncidentIds = ?, updatedAt = ?
+    WHERE id = ?
+    `,
+    [caseId, caseLabel, JSON.stringify(linkedIncidentIds), nowIso(), incident.id]
+  );
+
+  for (const linkedId of linkedIncidentIds) {
+    const linkedRow = await db.get(
+      `SELECT linkedIncidentIds FROM incidents WHERE id = ?`,
+      [linkedId]
+    );
+
+    const existing = safeJsonParse(linkedRow?.linkedIncidentIds, []);
+    const merged = Array.from(new Set([...existing, incident.id])).sort((a, b) => a - b);
+
+    await db.run(
+      `
+      UPDATE incidents
+      SET caseId = ?, linkedIncidentIds = ?, updatedAt = ?
+      WHERE id = ?
+      `,
+      [caseId, JSON.stringify(merged), nowIso(), linkedId]
+    );
+  }
+
+  return { caseId, caseLabel, linkedIncidentIds };
+}
+
+// -----------------------------
+// fetchers
+// -----------------------------
+function hydrateIncidentRow(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    amount: Number(row.amount || 0),
+    risk: Number(row.risk || 0),
+    attempts: Number(row.attempts || 0),
+    riskScore: Number(row.riskScore || 0),
+    repeatCount: Number(row.repeatCount || 1),
+    reasonCodes: safeJsonParse(row.reasonCodes, []),
+    linkedIncidentIds: safeJsonParse(row.linkedIncidentIds, []),
+    auditTrail: safeJsonParse(row.auditTrail, [])
+  };
+}
+
+async function getIncidentById(id) {
+  const row = await db.get(`SELECT * FROM incidents WHERE id = ?`, [id]);
+  return hydrateIncidentRow(row);
+}
+
+// -----------------------------
+// risk engine
+// -----------------------------
+async function analyzeEvent(raw) {
+  const event = {
+    type: raw.type || "unknown",
+    user: raw.user || "unknown-user",
+    attempts: Number(raw.attempts || 0),
+    amount: Number(raw.amount || 0),
+    ip: raw.ip || "unknown",
+    risk: Number(raw.risk || 0),
+    geoMismatch: Boolean(raw.geoMismatch || false),
+    velocitySpike: Boolean(raw.velocitySpike || false),
+    createdAt: nowIso()
+  };
+
+  const recentRows = await db.all(
+    `
+    SELECT *
+    FROM incidents
+    WHERE lower(user) = ?
+      AND datetime(createdAt) >= datetime('now', '-10 minutes')
+    ORDER BY id DESC
+    `,
+    [normalizeUser(event.user)]
+  );
+
+  const recentIncidents = recentRows.map(hydrateIncidentRow);
+  const recentCount = recentIncidents.length;
+
+  const reasonCodes = [];
+  let score = event.risk;
+
+  if (event.attempts >= 5) {
+    score += 25;
+    reasonCodes.push("RISK_OVER_85");
+  }
+
+  if (event.ip === "unknown") {
+    score += 20;
+    reasonCodes.push("UNSEEN_IP");
+  }
+
+  if (event.velocitySpike) {
+    score += 25;
+    reasonCodes.push("VELOCITY_SPIKE");
+  }
+
+  if (event.geoMismatch) {
+    score += 25;
+    reasonCodes.push("GEO_MISMATCH");
+  }
+
+  if (event.amount >= 10000) {
+    score += 25;
+    reasonCodes.push("HIGH_AMOUNT");
+  }
+
+  let correlationLabel = "none";
+  if (recentCount >= 1 && event.type === "payment") {
+    score += 20;
+    reasonCodes.push("CORRELATION_CRITICAL");
+    correlationLabel = "multi-signal attack pattern";
+  } else if (recentCount >= 1 && event.geoMismatch) {
+    score += 20;
+    reasonCodes.push("CORRELATION_CRITICAL");
+    correlationLabel = "geo-linked escalation";
+  }
+
+  const trendLabel = computeTrendLabel(recentCount);
+  if (trendLabel === "spike") {
+    score += 10;
+  } else if (trendLabel === "elevated") {
+    score += 5;
+  }
+
+  score = Math.min(99, score);
+
+  const severity = severityFromRiskScore(score);
+  const action = actionFromSeverity(severity);
+
+  if (reasonCodes.length === 0) {
+    reasonCodes.push("LOW_SIGNAL");
+  }
+
+  const incidentDraft = {
+    type: event.type,
+    user: event.user,
+    attempts: event.attempts,
+    amount: event.amount,
+    ip: event.ip,
+    risk: event.risk,
+    riskScore: score,
+    severity,
+    action,
+    status: "pending_review",
+    assignedTo: null,
+    sla: severity === "critical" ? "BREACH" : severity === "high" ? "AT_RISK" : "STABLE",
+    reasonCodes,
+    correlationLabel,
+    trendLabel,
+    createdAt: event.createdAt,
+    updatedAt: event.createdAt,
+    lastSeenAt: event.createdAt,
+    lastOperator: null
+  };
+
+  incidentDraft.fingerprint = buildFingerprint(incidentDraft);
+
+  return { event, incidentDraft };
+}
+
+// -----------------------------
+// action creation
+// -----------------------------
+async function createActionForIncident(incident) {
+  if (!incident || incident.action === "log") return null;
+
+  const createdAt = nowIso();
+
+  const result = await db.run(
+    `
+    INSERT INTO actions (incidentId, type, status, severity, title, user, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+    [
+      incident.id,
+      incident.action,
+      "pending",
+      incident.severity,
+      titleFromAction(incident.action),
+      incident.user,
+      createdAt
+    ]
+  );
+
+  return await db.get(`SELECT * FROM actions WHERE id = ?`, [result.lastID]);
+}
+
+// -----------------------------
+// routes
+// -----------------------------
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, service: "SignalDesk", ws: true });
+});
+
+app.post("/event", async (req, res) => {
+  try {
+    if (!db) {
+      return res.status(503).json({ ok: false, error: "Database not initialized" });
+    }
+
+    const { event, incidentDraft } = await analyzeEvent(req.body || {});
+
+    const existingRow = await db.get(
+      `
+      SELECT *
+      FROM incidents
+      WHERE fingerprint = ?
+        AND lower(user) = ?
+        AND status IN ('pending_review', 'open', 'triaged')
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [incidentDraft.fingerprint, normalizeUser(incidentDraft.user)]
+    );
+
+    if (existingRow) {
+      const existing = hydrateIncidentRow(existingRow);
+      const repeatCountFrom = Number(existing.repeatCount || 1);
+      const repeatCountTo = repeatCountFrom + 1;
+      const auditTrail = safeJsonParse(existing.auditTrail, []);
+      auditTrail.unshift(
+        buildAuditEntry(existing.id, "merged", {
+          repeatCountFrom,
+          repeatCountTo,
+          lastSeenAt: event.createdAt,
+          eventType: event.type,
+          user: event.user
+        })
+      );
+
+      await db.run(
+        `
+        UPDATE incidents
+        SET repeatCount = ?, lastSeenAt = ?, updatedAt = ?, trendLabel = ?, auditTrail = ?
+        WHERE id = ?
+        `,
+        [
+          repeatCountTo,
+          event.createdAt,
+          event.createdAt,
+          incidentDraft.trendLabel,
+          JSON.stringify(auditTrail),
+          existing.id
+        ]
+      );
+
+      const incident = await getIncidentById(existing.id);
+      broadcast("incident_updated", incident);
+
+      return res.json({
+        ok: true,
+        event,
+        incidentCreated: false,
+        merged: true,
+        dedupSkipped: false,
+        incident
+      });
+    }
+
+    const auditTrail = [];
+    auditTrail.unshift(
+      buildAuditEntry(0, "opened", {
+        severity: incidentDraft.severity,
+        action: incidentDraft.action,
+        riskScore: incidentDraft.riskScore,
+        reasonCodes: incidentDraft.reasonCodes
+      })
+    );
+
+    if (incidentDraft.correlationLabel !== "none") {
+      auditTrail.unshift(
+        buildAuditEntry(0, "correlation_detected", {
+          label: incidentDraft.correlationLabel
+        })
+      );
+    }
+
+    if (incidentDraft.trendLabel === "spike") {
+      auditTrail.unshift(
+        buildAuditEntry(0, "trend_detected", {
+          label: incidentDraft.trendLabel
+        })
+      );
+    }
+
+    const inserted = await db.run(
+      `
+      INSERT INTO incidents (
+        type, user, amount, ip, risk, attempts, riskScore, severity, action, status,
+        assignedTo, sla, reasonCodes, correlationLabel, trendLabel, fingerprint,
+        repeatCount, caseId, caseLabel, linkedIncidentIds, auditTrail,
+        createdAt, updatedAt, lastSeenAt, lastOperator
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        incidentDraft.type,
+        incidentDraft.user,
+        incidentDraft.amount,
+        incidentDraft.ip,
+        incidentDraft.risk,
+        incidentDraft.attempts,
+        incidentDraft.riskScore,
+        incidentDraft.severity,
+        incidentDraft.action,
+        incidentDraft.status,
+        incidentDraft.assignedTo,
+        incidentDraft.sla,
+        JSON.stringify(incidentDraft.reasonCodes),
+        incidentDraft.correlationLabel,
+        incidentDraft.trendLabel,
+        incidentDraft.fingerprint,
+        1,
+        null,
+        null,
+        JSON.stringify([]),
+        JSON.stringify(auditTrail),
+        incidentDraft.createdAt,
+        incidentDraft.updatedAt,
+        incidentDraft.lastSeenAt,
+        incidentDraft.lastOperator
+      ]
+    );
+
+    let incident = await getIncidentById(inserted.lastID);
+
+    const caseFlow = await assignCaseFlowToIncident(incident);
+    incident.caseId = caseFlow.caseId;
+    incident.caseLabel = caseFlow.caseLabel;
+    incident.linkedIncidentIds = caseFlow.linkedIncidentIds;
+
+    let actionCreated = await createActionForIncident(incident);
+
+    if (actionCreated) {
+      const refreshed = await getIncidentById(incident.id);
+      const nextAudit = [...refreshed.auditTrail];
+      nextAudit.unshift(
+        buildAuditEntry(incident.id, "action_created", {
+          actionId: actionCreated.id,
+          actionType: actionCreated.type,
+          title: actionCreated.title
+        })
+      );
+
+      await db.run(
+        `UPDATE incidents SET auditTrail = ?, updatedAt = ? WHERE id = ?`,
+        [JSON.stringify(nextAudit), nowIso(), incident.id]
+      );
+
+      incident = await getIncidentById(incident.id);
+    }
+
+    broadcast("incident_created", incident);
+    if (actionCreated) broadcast("action_created", actionCreated);
+
+    res.json({
+      ok: true,
+      event,
+      incidentCreated: true,
+      merged: false,
+      dedupSkipped: false,
+      incident,
+      actionCreated
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/api/incidents", async (_req, res) => {
+  try {
+    if (!db) return res.status(503).json({ ok: false, error: "Database not initialized" });
+
+    const rows = await db.all(`SELECT * FROM incidents ORDER BY id DESC`);
+    res.json(rows.map(hydrateIncidentRow));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/api/actions", async (_req, res) => {
+  try {
+    if (!db) return res.status(503).json({ ok: false, error: "Database not initialized" });
+
+    const rows = await db.all(`SELECT * FROM actions ORDER BY id DESC`);
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/api/summary", async (_req, res) => {
+  try {
+    if (!db) return res.status(503).json({ ok: false, error: "Database not initialized" });
+
+    const rows = await db.all(`SELECT * FROM incidents ORDER BY id DESC`);
+    const incidents = rows.map(hydrateIncidentRow);
+
+    const critical = incidents.filter((x) => x.severity === "critical").length;
+    const high = incidents.filter((x) => x.severity === "high").length;
+    const recurring = incidents.filter((x) => x.repeatCount > 1).length;
+
+    res.json({
+      ok: true,
+      summary: `There are ${incidents.length} tracked incidents, including ${critical} critical and ${high} high severity cases. ${recurring} incident patterns are recurring rather than one-off noise.`,
+      recommendation:
+        critical > 0
+          ? "Prioritize containment and analyst review of the highest-risk open incident."
+          : high > 0
+          ? "Review high-severity incidents before they escalate into critical chains."
+          : "Continue monitoring anomaly density while preserving current decision flow.",
+      stats: {
+        incidents: incidents.length,
+        critical,
+        high,
+        recurring
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/api/cases", async (_req, res) => {
+  try {
+    if (!db) return res.status(503).json({ ok: false, error: "Database not initialized" });
+
+    const rows = await db.all(`
+      SELECT *
+      FROM incidents
+      WHERE caseId IS NOT NULL
+      ORDER BY createdAt DESC, id DESC
+    `);
+
+    const incidents = rows.map(hydrateIncidentRow);
+    const grouped = new Map();
+
+    for (const incident of incidents) {
+      if (!grouped.has(incident.caseId)) {
+        grouped.set(incident.caseId, {
+          caseId: incident.caseId,
+          caseLabel: incident.caseLabel || "multi-signal investigation",
+          user: incident.user,
+          severity: incident.severity,
+          status: incident.status,
+          incidentCount: 0,
+          incidents: []
+        });
+      }
+
+      const group = grouped.get(incident.caseId);
+      group.incidentCount += 1;
+      group.incidents.push(incident);
+
+      if (incident.severity === "critical") {
+        group.severity = "critical";
+      }
+    }
+
+    res.json(Array.from(grouped.values()));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// -----------------------------
+// startup
+// -----------------------------
+(async () => {
+  try {
+    await initDb();
+    server.listen(PORT, () => {
+      console.log(`🚀 SignalDesk running on http://localhost:${PORT}`);
+    });
+  } catch (error) {
+    console.error("Failed to start SignalDesk:", error);
+    process.exit(1);
+  }
+})();

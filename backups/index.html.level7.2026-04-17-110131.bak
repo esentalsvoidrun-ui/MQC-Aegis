@@ -3,20 +3,23 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MQC Aegis — AI Decision Engine</title>
+  <title>SignalDesk — AI Decision Engine</title>
   <style>
     * { box-sizing: border-box; }
+
     body {
       margin: 0;
       font-family: Inter, Arial, sans-serif;
       background: radial-gradient(circle at top, #071426 0%, #03101d 45%, #020b14 100%);
       color: #e5eef8;
     }
+
     .wrap {
-      max-width: 1440px;
+      max-width: 1280px;
       margin: 0 auto;
       padding: 14px;
     }
+
     .topbar {
       display: flex;
       justify-content: space-between;
@@ -24,17 +27,20 @@
       gap: 12px;
       margin-bottom: 14px;
     }
+
     h1 {
       margin: 0;
       font-size: 28px;
       line-height: 1.1;
     }
+
     .sub {
       margin-top: 6px;
       color: #8ea3b7;
       font-size: 13px;
       max-width: 760px;
     }
+
     .statuspill {
       border: 1px solid rgba(255,255,255,.12);
       border-radius: 999px;
@@ -44,12 +50,14 @@
       background: rgba(255,255,255,.03);
       white-space: nowrap;
     }
+
     .minirow {
       display: flex;
       gap: 10px;
       margin-top: 8px;
       flex-wrap: wrap;
     }
+
     .mini {
       border: 1px solid rgba(255,255,255,.08);
       border-radius: 10px;
@@ -57,34 +65,14 @@
       font-size: 12px;
       color: #b5c6d8;
     }
-    .toolbar {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 14px;
-      flex-wrap: wrap;
-    }
-    .toolbar input, .toolbar select {
-      background: rgba(255,255,255,.04);
-      color: #e5eef8;
-      border: 1px solid rgba(255,255,255,.12);
-      border-radius: 10px;
-      padding: 10px 12px;
-      min-width: 180px;
-    }
-    .toolbar button {
-      background: rgba(255,255,255,.06);
-      color: #e5eef8;
-      border: 1px solid rgba(255,255,255,.14);
-      border-radius: 10px;
-      padding: 10px 12px;
-      cursor: pointer;
-    }
+
     .grid {
       display: grid;
-      grid-template-columns: 1.1fr 1fr 1fr 1fr;
+      grid-template-columns: 1.4fr 1fr 1fr;
       gap: 14px;
       align-items: start;
     }
+
     .panel {
       border: 1px solid rgba(255,255,255,.1);
       border-radius: 16px;
@@ -92,6 +80,7 @@
       box-shadow: 0 10px 40px rgba(0,0,0,.25);
       overflow: hidden;
     }
+
     .panelhead {
       padding: 12px 14px;
       border-bottom: 1px solid rgba(255,255,255,.08);
@@ -100,74 +89,23 @@
       text-transform: uppercase;
       color: #89a1b8;
     }
+
     .panelbody {
       padding: 14px;
     }
+
     .stack {
       display: grid;
       gap: 14px;
     }
+
     #liveFeed, #incidentList, #actionList {
       min-height: 180px;
       max-height: 620px;
       overflow: auto;
     }
-    #detailPanel {
-      min-height: 500px;
-    }
-    .muted {
-      color: #8ea3b7;
-      font-size: 12px;
-    }
-    .btnrow {
-      display: flex;
-      gap: 8px;
-      margin-top: 12px;
-      flex-wrap: wrap;
-    }
-    .btnrow button {
-      background: rgba(255,255,255,.06);
-      color: #e5eef8;
-      border: 1px solid rgba(255,255,255,.14);
-      border-radius: 10px;
-      padding: 8px 10px;
-      cursor: pointer;
-    }
-    .timeline {
-      display: flex;
-      align-items: flex-end;
-      gap: 8px;
-      min-height: 120px;
-      margin-top: 10px;
-    }
-    .barwrap {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 6px;
-      min-width: 34px;
-    }
-    .bar {
-      width: 26px;
-      border-radius: 8px 8px 4px 4px;
-      background: rgba(255,255,255,.2);
-    }
-    .barlabel {
-      writing-mode: vertical-rl;
-      transform: rotate(180deg);
-      font-size: 10px;
-      color: #8ea3b7;
-      max-height: 70px;
-      overflow: hidden;
-    }
-    .barvalue {
-      font-size: 11px;
-      font-weight: 700;
-    }
-    @media (max-width: 1250px) {
-      .grid { grid-template-columns: 1fr 1fr; }
-    }
-    @media (max-width: 900px) {
+
+    @media (max-width: 1050px) {
       .grid { grid-template-columns: 1fr; }
     }
   </style>
@@ -176,9 +114,9 @@
   <div class="wrap">
     <div class="topbar">
       <div>
-        <h1>MQC Aegis — AI Decision Engine</h1>
+        <h1>SignalDesk — AI Decision Engine</h1>
         <div class="sub">
-          From fragmented signals to operational action.
+          Live analysis. Real-time signals. AI-backed decisions. Correlation support for people who do not have time for nonsense.
         </div>
         <div class="minirow">
           <div class="mini" id="authStatus">Booting operator mode</div>
@@ -188,29 +126,11 @@
       <div class="statuspill">Operator board</div>
     </div>
 
-    <div class="toolbar">
-      <select id="severityFilter">
-        <option value="all">All severities</option>
-        <option value="critical">Critical only</option>
-        <option value="high">High only</option>
-        <option value="medium">Medium only</option>
-        <option value="low">Low only</option>
-      </select>
-      <input id="userSearch" type="text" placeholder="Search user..." />
-      <button id="clearFilters">Clear filters</button>
-      <button id="seedDemo">Seed demo events</button>
-    </div>
-
     <div class="grid">
       <div class="stack">
         <div class="panel">
           <div class="panelhead">AI Summary</div>
           <div class="panelbody" id="aiSummary">Loading summary...</div>
-        </div>
-
-        <div class="panel">
-          <div class="panelhead">Risk Timeline</div>
-          <div class="panelbody" id="riskTimeline">Loading timeline...</div>
         </div>
 
         <div class="panel">
@@ -227,11 +147,6 @@
       <div class="panel">
         <div class="panelhead">Operator Actions</div>
         <div class="panelbody" id="actionList"></div>
-      </div>
-
-      <div class="panel">
-        <div class="panelhead">Incident Drilldown</div>
-        <div class="panelbody" id="detailPanel">Select an incident.</div>
       </div>
     </div>
   </div>

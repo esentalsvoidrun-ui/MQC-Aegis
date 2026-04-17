@@ -1,8 +1,11 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 
-const USERS_FILE = "./data/users.json";
+const USERS_FILE = "../data/users.json";
 const SECRET = process.env.JWT_SECRET;
 
 if (!SECRET) {
@@ -15,7 +18,7 @@ function readUsers() {
 }
 
 function writeUsers(users) {
-  fs.mkdirSync("./data", { recursive: true });
+  fs.mkdirSync("../data", { recursive: true });
   fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
 }
 

@@ -1,0 +1,69 @@
+<script>
+  async function runAnalysis() {
+    const users = document.getElementById("users").value;
+    const revenue = document.getElementById("revenue").value;
+    const sessions = document.getElementById("sessions").value;
+    const churn = document.getElementById("churn").value;
+
+    const insightEl = document.getElementById("insightText");
+    const riskEl = document.getElementById("riskText");
+    const actionEl = document.getElementById("actionText");
+    const confidenceEl = document.getElementById("confidenceText");
+    const signalsEl = document.getElementById("signalsList");
+
+    insightEl.textContent = "Analyzing...";
+    riskEl.textContent = "-";
+    actionEl.textContent = "-";
+    confidenceEl.textContent = "-";
+    signalsEl.innerHTML = "";
+
+    try {
+      const res = await fetch("/analyze", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          users,
+          revenue,
+          sessions,
+          churn
+        })
+      });
+
+      const data = await res.json();
+
+      if (!data.ok) {
+        throw new Error(data.error || "Unknown error");
+      }
+
+      insightEl.textContent = data.insight;
+      riskEl.textContent = data.risk;
+      actionEl.textContent = data.action;
+      confidenceEl.textContent = data.confidence + "%";
+
+      if (data.risk === "HIGH") {
+        riskEl.style.color = "#ff4d4f";
+      } else if (data.risk === "MEDIUM") {
+        riskEl.style.color = "#f5c542";
+      } else {
+        riskEl.style.color = "#52c41a";
+      }
+
+      signalsEl.innerHTML = "";
+      (data.signals || []).forEach(signal => {
+        const li = document.createElement("li");
+        li.textContent = signal;
+        signalsEl.appendChild(li);
+      });
+
+    } catch (err) {
+      insightEl.textContent = "Analysis failed.";
+      riskEl.textContent = "ERROR";
+      actionEl.textContent = err.message;
+      confidenceEl.textContent = "-";
+      signalsEl.innerHTML = "";
+      console.error(err);
+    }
+  }
+</script>

@@ -1,0 +1,174 @@
+const API_BASE = "http://localhost:3000";
+const WS_URL = "ws://localhost:3000";
+
+const state = {
+  incidents: [],
+  actions: [],
+  cases: [],
+  summary: null,
+  wsConnected: false
+};
+
+function el(id) { return document.getElementById(id); }
+
+function escapeHtml(v) {
+  return String(v ?? "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;");
+}
+
+function badgeClass(v) {
+  v = String(v||"").toLowerCase();
+  if (["critical","block"].includes(v)) return "badge danger";
+  if (["high","manual_review"].includes(v)) return "badge warning";
+  if (["medium","rate_limit","elevated"].includes(v)) return "badge info";
+  return "badge muted";
+}
+
+function fmt(d){ return d ? new Date(d).toLocaleTimeString() : "—"; }
+
+async function fetchJson(p){
+  const r = await fetch(API_BASE+p);
+  return await r.json();
+}
+
+async function load(){
+  const [inc, act, sum, cases] = await Promise.all([
+    fetchJson("/api/incidents"),
+    fetchJson("/api/actions"),
+    fetchJson("/api/summary"),
+    fetchJson("/api/cases")
+  ]);
+  state.incidents = inc;
+  state.actions = act;
+  state.summary = sum;
+  state.cases = cases;
+  render();
+}
+
+/* =======================
+   🔥 CASE AI SUMMARY
+======================= */
+function buildCaseSummary(c){
+
+  const types = c.incidents.map(i=>i.type);
+  const hasPayment = types.includes("payment");
+  const hasGeo = c.incidents.some(i=>i.reasonCodes.includes("GEO_MISMATCH"));
+  const repeats = c.incidents.reduce((a,i)=>a+i.repeatCount,0);
+
+  if (hasPayment && hasGeo) {
+    return "Multi-signal escalation: authentication anomalies evolved into financial and geo-risk signals. Likely coordinated account takeover.";
+  }
+
+  if (hasPayment) {
+    return "Login anomalies escalated into high-value financial activity. Immediate containment recommended.";
+  }
+
+  if (hasGeo) {
+    return "Authentication anomalies combined with geo mismatch signals. Potential credential compromise.";
+  }
+
+  return `Repeated anomalous behavior detected (${repeats} signals). Monitor closely.`;
+}
+
+/* =======================
+   🔥 RENDER CASES
+======================= */
+function renderCases(){
+  const root = el("casePanel");
+
+  root.innerHTML = `
+    <div class="panel-header">
+      <h2>Attack Chains</h2>
+    </div>
+
+    ${state.cases.map(c => {
+
+      const incidents = [...c.incidents].sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
+      const last = incidents[incidents.length-1];
+
+      const caseActions = state.actions.filter(a =>
+        incidents.some(i => i.id === a.incidentId)
+      );
+
+      return `
+        <div class="case-card">
+
+          <div class="case-head">
+            <div>
+              <div class="case-id">${c.caseId}</div>
+              <div class="case-title">${c.caseLabel}</div>
+            </div>
+            <div>
+              <span class="${badgeClass(c.severity)}">${c.severity}</span>
+            </div>
+          </div>
+
+          <div class="case-summary">
+            ${buildCaseSummary(c)}
+          </div>
+
+          <div class="timeline">
+            ${incidents.map(i => `
+              <div class="timeline-item ${i.id === last.id ? "final" : ""}">
+                <div class="dot ${i.severity}"></div>
+
+                <div class="content">
+                  <div class="row">
+                    <strong>${i.type}</strong>
+                    <span>${fmt(i.createdAt)}</span>
+                  </div>
+
+                  <div class="badges">
+                    <span class="${badgeClass(i.severity)}">${i.severity}</span>
+                    <span class="${badgeClass(i.trendLabel)}">${i.trendLabel}</span>
+                  </div>
+
+                  <div class="meta">
+                    Risk: ${i.riskScore} · Repeats: ${i.repeatCount}
+                  </div>
+
+                  <div class="tags">
+                    ${i.reasonCodes.map(r=>`<span>${r}</span>`).join("")}
+                  </div>
+
+                  ${i.id === last.id ? `<div class="escalation">FINAL ESCALATION</div>` : ""}
+                </div>
+              </div>
+            `).join("")}
+          </div>
+
+          <div class="case-actions">
+            <strong>Actions (${caseActions.length})</strong>
+            ${caseActions.map(a => `
+              <div class="action-row">
+                <span>${a.title}</span>
+                <span class="${badgeClass(a.status)}">${a.status}</span>
+              </div>
+            `).join("")}
+          </div>
+
+        </div>
+      `;
+    }).join("")}
+  `;
+}
+
+/* =======================
+   BASIC RENDER
+======================= */
+function render(){
+  renderCases();
+}
+
+/* =======================
+   WS
+======================= */
+function ws(){
+  const s = new WebSocket(WS_URL);
+  s.onmessage = ()=>load();
+}
+
+load();
+ws();

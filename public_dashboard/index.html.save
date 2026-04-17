@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SignalDesk</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #050b16;
+      --panel: rgba(9, 18, 38, 0.88);
+      --panel-2: rgba(12, 23, 48, 0.96);
+      --border: rgba(102, 136, 214, 0.18);
+      --text: #eef3ff;
+      --muted: #9aa7c2;
+      --blue: #8bb8ff;
+      --cyan: #78e4ff;
+      --green: #53f2a5;
+      --yellow: #ffd166;
+      --orange: #ff9f43;
+      --red: #ff6b6b;
+      --red-2: #ff4d5f;
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.34);
+      --radius: 22px;
+    }
+
+    html, body {
+      min-height: 100%;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(31, 75, 180, 0.22), transparent 26%),
+        radial-gradient(circle at top right, rgba(7, 120, 120, 0.22), transparent 22%),
+        linear-gradient(180deg, #07101e 0%, #040914 100%);
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(255,255,255,0.012) 0px,
+        rgba(255,255,255,0.012) 1px,
+        transparent 2px,
+        transparent 4px
+      );
+      opacity: 0.16;
+      mix-blend-mode: soft-light;
+    }
+
+    .wrap {
+      max-width: 1320px;
+      margin: 44px auto;
+      padding: 0 18px 40px;
+    }
+
+    .hero {
+      position: relative;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 24px;
+      padding: 28px 26px 24px;
+      border-radius: 24px;
+      background:
+        radial-gradient(circle at top left, rgba(65, 110, 255, 0.10), transparent 28%),
+        linear-gradient(180deg, rgba(9, 18, 40, 0.96), rgba(6, 14, 30, 0.98));
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(90deg, transparent, rgba(114, 166, 255, 0.07), transparent);
+    }
+
+    .brand h1 {
+      font-size: 3rem;
+      line-height: 1;
+      margin-bottom: 10px;
+      letter-spacing: -0.04em;
+    }
+
+    .eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.22em;
+      color: var(--blue);
+      font-size: 0.92rem;
+      margin-bottom: 10px;
+    }
+
+    .tagline {
+      color: var(--muted);
+      font-size: 1.02rem;
+    }
+
+    .stream-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 18px;
+      border-radius: 999px;
+      background: rgba(50, 20, 30, 0.50);
+      border: 1px solid rgba(255, 107, 107, 0.26);
+      color: #ff8e8e;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .pill-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--red);
+      box-shadow: 0 0 14px rgba(255, 107, 107, 0.8);
+      animation: dangerPulse 1.3s infinite;
+    }
+
+    .threat-banner {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 18px 0 22px;
+      padding: 13px 16px;
+      border-radius: 16px;
+      color: #ffd5d5;
+      background: linear-gradient(90deg, rgba(85, 16, 16, 0.95), rgba(45, 10, 10, 0.95));
+      border: 1px solid rgba(255, 90, 90, 0.24);
+      box-shadow: 0 10px 30px rgba(255, 60, 60, 0.08);
+      font-weight: 600;
+    }
+
+    .threat-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: #ff6666;
+      box-shadow: 0 0 14px rgba(255, 90, 90, 0.7);
+      animation: dangerPulse 1.4s infinite;
+      flex: 0 0 auto;
+    }
+
+    .grid-top {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    .metric-card,
+    .panel,
+    .activity-card {
+      position: relative;
+      border-radius: var(--radius);
+      background:
+        radial-gradient(circle at top left, rgba(68, 108, 255, 0.05), transparent 30%),
+        linear-gradient(180deg, rgba(8, 18, 39, 0.98), rgba(7, 14, 31, 0.98));
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .metric-card {
+      min-height: 250px;
+      padding: 24px 20px;
+    }
+
+    .metric-card::after,
+    .panel::after,
+    .activity-card::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      border-radius: inherit;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
+    }
+
+    .metric-label {
+      font-size: 0.9rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 14px;
+    }
+
+    .metric-value {
+      font-size: 3.2rem;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      margin-bottom: 12px;
+    }
+
+    .metric-sub {
+      color: var(--green);
+      font-weight: 700;
+      font-size: 1rem;
+    }
+
+    .metric-card.risk {
+      border: 1px solid rgba(255, 80, 80, 0.28);
+      box-shadow:
+        0 0 0 1px rgba(255, 70, 70, 0.08) inset,
+        0 0 24px rgba(255, 60, 60, 0.12),
+        var(--shadow);
+    }
+
+    .metric-card.risk::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        135deg,
+        rgba(255, 0, 60, 0.08),
+        transparent 40%,
+        rgba(255, 140, 0, 0.06)
+      );
+      pointer-events: none;
+    }
+
+    .risk-value {
+      color: var(--red);
+      text-shadow: 0 0 18px rgba(255, 70, 70, 0.28);
+    }
+
+    .risk-sub {
+      color: var(--yellow);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .risk-pulse {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: #ff5c5c;
+      box-shadow: 0 0 14px rgba(255, 92, 92, 0.7);
+      animation: dangerPulse 1.4s infinite;
+    }
+
+    .ai-panel {
+      min-height: 250px;
+      padding: 22px 20px;
+      background:
+        radial-gradient(circle at top left, rgba(90, 130, 255, 0.08), transparent 35%),
+        linear-gradient(180deg, rgba(12, 20, 42, 0.96), rgba(8, 14, 32, 0.98));
+    }
+
+    .ai-panel::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      height: 1px;
+      width: 100%;
+      background: linear-gradient(90deg, transparent, rgba(115, 170, 255, 0.55), transparent);
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 1.1rem;
+      font-weight: 800;
+      margin-bottom: 18px;
+    }
+
+    .icon {
+      font-size: 1.15rem;
+    }
+
+    .analysis-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .analysis-block h4,
+    .decision-block h4 {
+      font-size: 0.95rem;
+      margin-bottom: 8px;
+      color: #d9e4ff;
+    }
+
+    .analysis-block p,
+    .decision-block p {
+      color: #d9e4ff;
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+
+    .muted-loading {
+      color: var(--muted);
+    }
+
+    .decision-side {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .decision-line {
+      font-size: 1rem;
+      color: #dde6ff;
+    }
+
+    .decision-line strong {
+      color: #f4f7ff;
+    }
+
+    .action-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      margin-top: 4px;
+    }
+
+    .threat-btn {
+      appearance: none;
+      border: 1px solid rgba(125, 157, 255, 0.18);
+      background: linear-gradient(180deg, rgba(27, 43, 80, 0.92), rgba(22, 33, 59, 0.98));
+      color: #edf3ff;
+      border-radius: 14px;
+      padding: 14px 18px;
+      font-weight: 800;
+      cursor: pointer;
+      transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+    }
+
+    .threat-btn:hover {
+      transform: translateY(-1px);
+      border-color: rgba(125, 157, 255, 0.32);
+      box-shadow: 0 8px 22px rgba(30, 50, 95, 0.26);
+    }
+
+    .status-intervene {
+      color: var(--red);
+      font-weight: 800;
+      text-shadow: 0 0 14px rgba(255, 90, 90, 0.2);
+    }
+
+    .status-monitor {
+      color: var(--yellow);
+      font-weight: 800;
+    }
+
+    .status-allow {
+      color: #72f2ac;
+      font-weight: 800;
+    }
+
+    .priority-high {
+      color: #ff8c8c;
+      font-weight: 800;
+    }
+
+    .priority-medium {
+      color: var(--yellow);
+      font-weight: 800;
+    }
+
+    .priority-low {
+      color: #8af5b8;
+      font-weight: 800;
+    }
+
+    .grid-bottom {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 18px;
+    }
+
+    .panel {
+      padding: 20px;
+    }
+
+    .section-title {
+      font-size: 1.15rem;
+      font-weight: 800;
+      margin-bottom: 18px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      padding: 14px 10px;
+      text-align: left;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 0.94rem;
+      font-weight: 700;
+    }
+
+    td {
+      color: #e6eeff;
+      font-size: 0.98rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+    }
+
+    .badge-high {
+      background: rgba(255, 70, 70, 0.12);
+      color: #ff7d7d;
+      border: 1px solid rgba(255, 90, 90, 0.22);
+    }
+
+    .badge-medium {
+      background: rgba(255, 196, 0, 0.12);
+      color: #ffd166;
+      border: 1px solid rgba(255, 209, 102, 0.22);
+    }
+
+    .badge-low {
+      background: rgba(80, 220, 140, 0.12);
+      color: #86efac;
+      border: 1px solid rgba(134, 239, 172, 0.2);
+    }
+
+    .activity-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .activity-card {
+      padding: 16px 16px 14px;
+      border-radius: 18px;
+      background:
+        linear-gradient(180deg, rgba(18, 29, 57, 0.96), rgba(14, 23, 45, 0.96));
+    }
+
+    .activity-title {
+      font-size: 0.98rem;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    .activity-text {
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 0.95rem;
+    }
+
+    @keyframes dangerPulse {
+      0% { transform: scale(1); opacity: 0.85; }
+      50% { transform: scale(1.45); opacity: 1; }
+      100% { transform: scale(1); opacity: 0.85; }
+    }
+
+    @media (max-width: 1100px) {
+      .grid-top {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .grid-bottom {
+        grid-template-columns: 1fr;
+      }
+
+      .analysis-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .hero {
+        flex-direction: column;
+      }
+
+      .grid-top {
+        grid-template-columns: 1fr;
+      }
+
+      .brand h1 {
+        font-size: 2.3rem;
+      }
+
+      .action-row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .wrap {
+        margin-top: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <div class="brand">
+        <h1>SignalDesk</h1>
+        <div class="eyebrow">AI Decision Engine</div>
+        <div class="tagline">Live analysis • Real-time signals • AI-backed decisions</div>
+      </div>
+
+      <div class="stream-pill">
+        <span class="pill-dot"></span>
+        Stream Offline
+      </div>
+    </header>
+
+    <div id="threatBanner" class="threat-banner">
+      <span class="threat-dot"></span>
+      Elevated anomaly density detected across live decision flow
+    </div>
+
+    <section class="grid-top">
+      <div class="metric-card">
+        <div class="metric-label">Users</div>
+        <div id="usersValue" class="metric-value">11,269</div>
+        <div class="metric-sub">↑ +12% vs last cycle</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-label">Revenue</div>
+        <div id="revenueValue" class="metric-value">$1,661,969</div>
+        <div class="metric-sub">↑ +8.1% revenue velocity</div>
+      </div>
+
+      <div class="metric-card risk">
+        <div class="metric-label">Risk Score</div>
+        <div id="riskValue" class="metric-value risk-value">98</div>
+        <div class="metric-sub risk-sub">
+          <span class="risk-pulse"></span>
+          Threat level elevated
+        </div>
+      </div>
+
+      <div class="metric-card ai-panel">
+        <div class="panel-title">
+          <span class="icon">🧠</span>
+          <span>AI Analysis</span>
+        </div>
+
+        <div class="analysis-grid">
+          <div class="analysis-block">
+            <h4>Live Analysis</h4>
+            <p id="aiInsight" class="muted-loading">Analysis lock acquired. Awaiting live model output...</p>
+
+            <h4>🎯 Recommendation</h4>
+            <p id="aiRecommendation" class="muted-loading">Staging recommendation engine...</p>
+
+            <h4>📊 Confidence</h4>
+            <p id="aiConfidence" class="muted-loading">Calibrating...</p>
+          </div>
+
+          <div class="decision-side">
+            <div class="panel-title" style="margin-bottom: 8px;">
+              <span class="icon">⚡</span>
+              <span>AI Decision Engine</span>
+            </div>
+
+            <div class="decision-line"><strong>Action:</strong> <span id="decisionAction">--</span></div>
+            <div class="decision-line"><strong>Reason:</strong> <span id="decisionReason">--</span></div>
+            <div class="decision-line"><strong>Priority:</strong> <span id="decisionPriority">--</span></div>
+
+            <div class="action-row">
+              <button class="threat-btn" type="button">Open Threat Feed</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid-bottom">
+      <div class="panel">
+        <div class="section-title">Decision Stream</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Event</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody id="decisionTable">
+            <tr>
+              <td>Revenue spike</td>
+              <td>Live Signal</td>
+              <td><span class="badge badge-high">THREAT MARKED</span></td>
+              <td>00:03:37</td>
+            </tr>
+            <tr>
+              <td>Geo mismatch</td>
+              <td>Live Signal</td>
+              <td><span class="badge badge-medium">UNDER REVIEW</span></td>
+              <td>00:03:33</td>
+            </tr>
+            <tr>
+              <td>Payment review</td>
+              <td>Live Signal</td>
+              <td><span class="badge badge-high">ESCALATED</span></td>
+              <td>00:03:28</td>
+            </tr>
+            <tr>
+              <td>Revenue spike</td>
+              <td>Live Signal</td>
+              <td><span class="badge badge-medium">UNDER REVIEW</span></td>
+              <td>00:03:24</td>
+            </tr>
+            <tr>
+              <td>Access request</td>
+              <td>Live Signal</td>
+              <td><span class="badge badge-low">CLEARED</span></td>
+              <td>00:03:19</td>
+            </tr>
+            <tr>
+              <td>User anomaly</td>
+              <td>Live Signal</td>
+              <td><span class="badge badge-high">THREAT MARKED</span></td>
+              <td>00:03:15</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <div class="section-title">System Activity</div>
+        <div class="activity-list">
+          <div class="activity-card">
+            <div class="activity-title">Revenue pulse received</div>
+            <div class="activity-text">SignalDesk received fresh backend event flow.</div>
+          </div>
+
+          <div class="activity-card">
+            <div class="activity-title">Decision flow updated</div>
+            <div class="activity-text">Behavioral inputs shifted slightly in the latest cycle.</div>
+          </div>
+
+          <div class="activity-card">
+            <div class="activity-title">Anomaly watch active</div>
+            <div class="activity-text">Cluster drift detected across monitored sessions.</div>
+          </div>
+
+          <div class="activity-card">
+            <div class="activity-title">Live system signal</div>
+            <div class="activity-text">System telemetry remains above baseline with no drop in flow integrity.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+async function fetchAI() {
+  try {
+    const res = await fetch("/ai");
+    const data = await res.json();
+
+    console.log("AI DATA:", data); // 👈 viktig för debug
+
+    // 🧠 AI
+    document.getElementById("aiInsight").innerText = data.insight;
+    document.getElementById("aiRecommendation").innerText = data.recommendation;
+    document.getElementById("aiConfidence").innerText = data.confidence + "%";
+
+    // ⚡ Decision
+    document.getElementById("decisionAction").innerText = data.decision.action;
+    document.getElementById("decisionReason").innerText = data.decision.reason;
+    document.getElementById("decisionPriority").innerText = data.decision.priority;
+
+    // 📊 Metrics (detta saknade du troligen)
+    if (data.users) {
+      document.getElementById("usersValue").innerText = data.users.toLocaleString();
+    }
+
+    if (data.revenue) {
+      document.getElementById("revenueValue").innerText =
+        "$" + data.revenue.toLocaleString();
+    }
+
+    if (data.risk) {
+      document.getElementById("riskValue").innerText = data.risk;
+    }
+
+  } catch (err) {
+    console.error("FETCH ERROR:", err);
+  }
+}
+
+// 🔁 kör direkt + loop
+fetchAI();
+setInterval(fetchAI, 5000);
+</script>
+
+          <span class="threat-dot"></span>
+          Elevated anomaly density detected across live decision flow
+        `;
+      } else if (risk >= 75 || action === "MONITOR") {
+        banner.innerHTML = `
+          <span class="threat-dot"></span>
+          Elevated monitoring posture active across the current cycle
+        `;
+      } else {
+        banner.innerHTML = `
+          <span class="threat-dot"></span>
+          System stable. Signal flow remains inside expected operational bands
+        `;
+      }
+    }
+
+    async function fetchAI() {
+      try {
+        const res = await fetch("/ai");
+        if (!res.ok) {
+          throw new Error("Backend /ai route failed");
+        }
+
+        const data = await res.json();
+
+        const aiInsight = document.getElementById("aiInsight");
+        const aiRecommendation = document.getElementById("aiRecommendation");
+        const aiConfidence = document.getElementById("aiConfidence");
+
+        aiInsight.textContent = data.insight || "No insight returned.";
+        aiRecommendation.textContent = data.recommendation || "No recommendation returned.";
+        aiConfidence.textContent = typeof data.confidence === "number"
+          ? data.confidence + "%"
+          : "Unavailable";
+
+        aiInsight.classList.remove("muted-loading");
+        aiRecommendation.classList.remove("muted-loading");
+        aiConfidence.classList.remove("muted-loading");
+
+        paintDecision(data);
+
+        if (typeof data.users === "number") {
+          document.getElementById("usersValue").textContent = formatNumber(data.users);
+        }
+
+        if (typeof data.revenue === "number") {
+          document.getElementById("revenueValue").textContent = formatCurrency(data.revenue);
+        }
+
+        if (typeof data.risk === "number") {
+          document.getElementById("riskValue").textContent = data.risk;
+          syncThreatBanner(data.risk, data.decision?.action);
+        } else {
+          syncThreatBanner(95, data.decision?.action);
+        }
+      } catch (err) {
+        console.error("AI fetch failed:", err);
+
+        document.getElementById("aiInsight").textContent =
+          "Threat model unreachable. Retaining last known posture.";
+        document.getElementById("aiRecommendation").textContent =
+          "Hold review state and inspect backend /ai route.";
+        document.getElementById("aiConfidence").textContent = "Degraded";
+        document.getElementById("decisionAction").textContent = "LINK LOST";
+        document.getElementById("decisionReason").textContent = "No live decision payload available";
+        document.getElementById("decisionPriority").textContent = "HIGH";
+
+        document.getElementById("decisionAction").className = "status-intervene";
+        document.getElementById("decisionPriority").className = "priority-high";
+      }
+    }
+
+    fetchAI();
+    setInterval(fetchAI, 5000);
+  </script>
+</body>
+</html>

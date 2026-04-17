@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SignalDesk – AI Decision Engine</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #121a2b;
+      --border: #263247;
+      --text: #e5edf7;
+      --muted: #97a6ba;
+      --blue: #60a5fa;
+      --blue2: #3b82f6;
+      --green: #4ade80;
+      --yellow: #facc15;
+      --red: #f87171;
+      --radius: 18px;
+      --shadow: 0 18px 45px rgba(0,0,0,.28);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      background:
+        radial-gradient(circle at 15% 20%, rgba(59,130,246,.18), transparent 35%),
+        radial-gradient(circle at 85% 10%, rgba(74,222,128,.10), transparent 30%),
+        linear-gradient(180deg, #0b1220 0%, #0f172a 100%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    .app {
+      max-width: 1400px;
+      margin: 0 auto;
+      display: grid;
+      gap: 20px;
+    }
+
+    .brand, .card {
+      background: rgba(18,26,43,.84);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+    }
+
+    .brand {
+      padding: 24px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 34px;
+      color: #fff;
+    }
+
+    .brand .sub {
+      margin-top: 8px;
+      color: var(--blue);
+      font-size: 13px;
+      letter-spacing: 1.8px;
+      text-transform: uppercase;
+    }
+
+    .brand small {
+      display: block;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .pill {
+      padding: 10px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+      border: 1px solid rgba(74,222,128,.28);
+      background: rgba(74,222,128,.12);
+      color: var(--green);
+      transition: .25s ease;
+    }
+
+    .pill.bad {
+      border-color: rgba(248,113,113,.35);
+      background: rgba(248,113,113,.12);
+      color: var(--red);
+    }
+
+    .top-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1.4fr;
+      gap: 20px;
+    }
+
+    .card { padding: 22px; }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+    }
+
+    .metric-value {
+      margin-top: 10px;
+      font-size: 40px;
+      font-weight: 800;
+      color: #fff;
+      transition: transform .2s ease, opacity .2s ease;
+    }
+
+    .metric-note {
+      margin-top: 8px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .up { color: var(--green); }
+    .warn { color: var(--yellow); }
+    .down { color: var(--red); }
+
+    .ai-panel {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      background: linear-gradient(180deg, rgba(24,34,53,.96), rgba(18,26,43,.92));
+    }
+
+    .ai-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .ai-head h2 {
+      margin: 0;
+      font-size: 20px;
+      color: #fff;
+    }
+
+    .ai-status {
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .ai-output {
+      margin-top: 14px;
+      min-height: 110px;
+      padding: 16px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.03);
+      border: 1px solid rgba(255,255,255,.06);
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 11px 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform .15s ease, opacity .15s ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      opacity: .97;
+    }
+
+    .primary {
+      background: linear-gradient(135deg, var(--blue), var(--blue2));
+      color: #fff;
+    }
+
+    .secondary {
+      background: rgba(255,255,255,.05);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .bottom-grid {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 20px;
+    }
+
+    h3 {
+      margin: 0 0 16px;
+      color: #fff;
+      font-size: 18px;
+    }
+
+    .table-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      padding: 13px 10px;
+      text-align: left;
+      border-bottom: 1px solid rgba(255,255,255,.06);
+      font-size: 14px;
+    }
+
+    th { color: var(--muted); }
+    td { color: var(--text); }
+
+    .activity-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .activity-item {
+      padding: 14px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.03);
+      border: 1px solid rgba(255,255,255,.06);
+    }
+
+    .activity-item strong {
+      display: block;
+      margin-bottom: 6px;
+      color: #fff;
+    }
+
+    .activity-item span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .fade-in {
+      animation: fadeIn .35s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 1100px) {
+      .top-grid { grid-template-columns: 1fr 1fr; }
+      .bottom-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      body { padding: 16px; }
+      .brand { flex-direction: column; }
+      .top-grid { grid-template-columns: 1fr; }
+      .metric-value { font-size: 32px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="brand">
+      <div>
+        <h1>SignalDesk</h1>
+        <div class="sub">AI Decision Engine</div>
+        <small>Live analysis • Real-time signals • AI-backed decisions</small>
+      </div>
+      <div class="pill" id="system-status">● AI Connected</div>
+    </div>
+
+    <section class="top-grid">
+      <div class="card">
+        <div class="metric-label">Users</div>
+        <div class="metric-value" id="usersValue">1284</div>
+        <div class="metric-note up" id="usersNote">↑ +12% vs last cycle</div>
+      </div>
+
+      <div class="card">
+        <div class="metric-label">Revenue</div>
+        <div class="metric-value" id="revenueValue">$48,920</div>
+        <div class="metric-note up" id="revenueNote">↑ +8.1% revenue velocity</div>
+      </div>
+
+      <div class="card">
+        <div class="metric-label">Risk Score</div>
+        <div class="metric-value" id="riskValue">18</div>
+        <div class="metric-note warn" id="riskNote">→ Stable but monitored</div>
+      </div>
+
+      <div class="card ai-panel">
+        <div>
+          <div class="ai-head">
+            <h2>AI Insights</h2>
+            <div class="ai-status" id="ai-status">Live Analysis</div>
+          </div>
+          <div class="ai-output fade-in" id="ai-output">Waiting for analysis...</div>
+        </div>
+        <div class="actions">
+          <button class="primary" onclick="runAI()">Refresh AI Analysis</button>
+          <button class="secondary" onclick="demoSignal()">View Signals</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="bottom-grid">
+      <div class="card">
+        <h3>Decision Stream</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Event</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody id="decisionTable">
+              <tr><td>Payment review</td><td>Fraud Check</td><td>Approved</td><td>12:41</td></tr>
+              <tr><td>User anomaly</td><td>Behavior Signal</td><td>Flagged</td><td>12:39</td></tr>
+              <tr><td>Access request</td><td>Identity</td><td>Verified</td><td>12:37</td></tr>
+              <tr><td>Revenue spike</td><td>Business Signal</td><td>Observed</td><td>12:35</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>System Activity</h3>
+        <div class="activity-list" id="activityList">
+          <div class="activity-item">
+            <strong>AI model responded normally</strong>
+            <span>Confidence remains high across recent decision batches.</span>
+          </div>
+          <div class="activity-item">
+            <strong>Risk pattern detected</strong>
+            <span>A moderate anomaly cluster was observed in the latest event stream.</span>
+          </div>
+          <div class="activity-item">
+            <strong>Revenue trend strengthening</strong>
+            <span>Commercial activity continues above baseline over the last cycle.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  
+
+
+
+
+
+
+
+
+<script>
+(function () {
+  if (window.__signalDeskWSBooted) return;
+  window.__signalDeskWSBooted = true;
+
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = protocol + "//" + location.host;
+  const socket = new WebSocket(wsUrl);
+
+  socket.onopen = () => {
+    console.log("SignalDesk WS connected:", wsUrl);
+    const pill = document.getElementById("system-status");
+    if (pill) {
+      pill.textContent = "● AI Connected";
+      pill.classList.remove("bad");
+    }
+  };
+
+  socket.onclose = () => {
+    console.log("SignalDesk WS disconnected");
+    const pill = document.getElementById("system-status");
+    if (pill) {
+      pill.textContent = "● Stream Offline";
+      pill.classList.add("bad");
+    }
+  };
+
+  socket.onerror = () => {
+    const pill = document.getElementById("system-status");
+    if (pill) {
+      pill.textContent = "● Stream Error";
+      pill.classList.add("bad");
+    }
+  };
+
+  socket.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+
+    if (msg.type === "metrics") {
+      const users = document.getElementById("usersValue");
+      const revenue = document.getElementById("revenueValue");
+      const risk = document.getElementById("riskValue");
+
+      if (users) users.textContent = new Intl.NumberFormat("en-US").format(msg.data.users);
+      if (revenue) revenue.textContent = "$" + new Intl.NumberFormat("en-US").format(msg.data.revenue);
+      if (risk) risk.textContent = msg.data.risk;
+    }
+
+    if (msg.type === "event") {
+      const tbody = document.getElementById("decisionTable");
+      if (tbody) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${msg.data.event}</td>
+          <td>Live Signal</td>
+          <td>${msg.data.status}</td>
+          <td>${msg.data.time}</td>
+        `;
+        tbody.insertBefore(tr, tbody.firstChild);
+        while (tbody.children.length > 6) {
+          tbody.removeChild(tbody.lastChild);
+        }
+      }
+    }
+
+    if (msg.type === "activity") {
+      const box = document.getElementById("activityList");
+      if (box) {
+        const div = document.createElement("div");
+        div.className = "activity-item";
+        div.innerHTML = `
+          <strong>${msg.data.title}</strong>
+          <span>${msg.data.text}</span>
+        `;
+        box.insertBefore(div, box.firstChild);
+        while (box.children.length > 4) {
+          box.removeChild(box.lastChild);
+        }
+      }
+    }
+  };
+})();
+</script>
+
+
+<script>
+(function () {
+  if (window.__signalDeskSeparateWS) return;
+  window.__signalDeskSeparateWS = true;
+
+  const wsUrl = "ws://" + location.hostname + ":3002";
+  const socket = new WebSocket(wsUrl);
+
+  socket.onopen = () => {
+    console.log("SignalDesk WS connected:", wsUrl);
+    const pill = document.getElementById("system-status");
+    if (pill) {
+      pill.textContent = "● Live Stream Connected";
+      pill.classList.remove("bad");
+    }
+  };
+
+  socket.onclose = () => {
+    const pill = document.getElementById("system-status");
+    if (pill) {
+      pill.textContent = "● Stream Offline";
+      pill.classList.add("bad");
+    }
+  };
+
+  socket.onerror = () => {
+    const pill = document.getElementById("system-status");
+    if (pill) {
+      pill.textContent = "● Stream Error";
+      pill.classList.add("bad");
+    }
+  };
+
+  socket.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+
+    if (msg.type === "metrics") {
+      const users = document.getElementById("usersValue");
+      const revenue = document.getElementById("revenueValue");
+      const risk = document.getElementById("riskValue");
+
+      if (users) users.textContent = new Intl.NumberFormat("en-US").format(msg.data.users);
+      if (revenue) revenue.textContent = "$" + new Intl.NumberFormat("en-US").format(msg.data.revenue);
+      if (risk) risk.textContent = msg.data.risk;
+    }
+
+    if (msg.type === "event") {
+      const tbody = document.getElementById("decisionTable");
+      if (tbody) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${msg.data.event}</td>
+          <td>Live Signal</td>
+          <td>${msg.data.status}</td>
+          <td>${msg.data.time}</td>
+        `;
+        tbody.insertBefore(tr, tbody.firstChild);
+        while (tbody.children.length > 6) {
+          tbody.removeChild(tbody.lastChild);
+        }
+      }
+    }
+
+    if (msg.type === "activity") {
+      const box = document.getElementById("activityList");
+      if (box) {
+        const div = document.createElement("div");
+        div.className = "activity-item";
+        div.innerHTML = `
+          <strong>${msg.data.title}</strong>
+          <span>${msg.data.text}</span>
+        `;
+        box.insertBefore(div, box.firstChild);
+        while (box.children.length > 4) {
+          box.removeChild(box.lastChild);
+        }
+      }
+    }
+  };
+})();
+</script>
+
+</body>
+</html>

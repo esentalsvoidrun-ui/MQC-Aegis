@@ -1,0 +1,382 @@
+import http from "http";
+import express from "express";
+import { WebSocketServer } from "ws";
+
+const app = express();
+app.use(express.json());
+app.use(express.static("public_dashboard"));
+
+const PORT = process.env.PORT || 3000;
+
+const incidentStore = [];
+const actionStore = [];
+const eventStore = [];
+
+let incidentIdSeq = 1;
+let actionIdSeq = 1;
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function broadcast(type, data) {
+  if (!wss) return;
+  const msg = JSON.stringify({ type, data });
+  for (const client of wss.clients) {
+    if (client.readyState === 1) {
+      client.send(msg);
+    }
+  }
+}
+
+function findIncidentById(id) {
+  return incidentStore.find((x) => String(x.id) === String(id));
+}
+
+function computeRiskScore(event) {
+  let score = Number(event.risk || 0);
+
+  if (event.type === "login") {
+    score += Math.min(Number(event.attempts || 0) * 8, 40);
+  }
+
+  if (event.type === "payment") {
+    const amount = Number(event.amount || 0);
+    if (amount >= 10000) score += 45;
+    else if (amount >= 5000) score += 30;
+    else if (amount >= 1000) score += 15;
+  }
+
+  if (event.ip === "unknown") score += 20;
+  if (event.geoMismatch) score += 20;
+  if (event.velocitySpike) score += 15;
+
+  return Math.min(score, 99);
+}
+
+function getSeverity(score) {
+  if (score >= 85) return "critical";
+  if (score >= 65) return "high";
+  if (score >= 40) return "medium";
+  return "low";
+}
+
+function getRecommendedAction(score) {
+  if (score >= 85) return "block";
+  if (score >= 65) return "manual_review";
+  if (score >= 40) return "rate_limit";
+  return "log";
+}
+
+function recentEventsForUser(user, windowMs = 10 * 60 * 1000) {
+  const cutoff = Date.now() - windowMs;
+  return eventStore.filter(
+    (e) => e.user === user && new Date(e.createdAt).getTime() >= cutoff
+  );
+}
+
+function detectCorrelation(event) {
+  const recent = recentEventsForUser(event.user);
+  const loginCount = recent.filter((e) => e.type === "login").length;
+  const hasPayment = recent.some((e) => e.type === "payment");
+  const hasUnknownIp = recent.some((e) => e.ip === "unknown");
+  const hasGeoMismatch = recent.some((e) => e.geoMismatch);
+
+  if (loginCount >= 5 && hasPayment && hasUnknownIp) {
+    return "multi-signal attack pattern";
+  }
+
+  if (loginCount >= 5 && hasGeoMismatch) {
+    return "credential abuse pattern";
+  }
+
+  return "none";
+}
+
+function buildReasonCodes(event, riskScore, correlationLabel) {
+  const codes = [];
+
+  if (riskScore >= 85) codes.push("RISK_OVER_85");
+  if (event.ip === "unknown") codes.push("UNSEEN_IP");
+  if (Number(event.amount || 0) >= 10000) codes.push("HIGH_AMOUNT");
+  if (Number(event.attempts || 0) >= 5) codes.push("VELOCITY_SPIKE");
+  if (event.geoMismatch) codes.push("GEO_MISMATCH");
+  if (correlationLabel !== "none") codes.push("CORRELATION_CRITICAL");
+
+  return codes;
+}
+
+function createActionEntry({ incidentId, user, action, status, reason, operator }) {
+  const entry = {
+    id: actionIdSeq++,
+    incidentId,
+    user,
+    action,
+    status,
+    reason,
+    operator,
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  };
+  actionStore.unshift(entry);
+  return entry;
+}
+
+function createIncidentFromEvent(event) {
+  const riskScore = computeRiskScore(event);
+  const severity = getSeverity(riskScore);
+  const recommendedAction = getRecommendedAction(riskScore);
+  const correlationLabel = detectCorrelation(event);
+  const reasonCodes = buildReasonCodes(event, riskScore, correlationLabel);
+
+  const shouldCreateIncident =
+    severity !== "low" ||
+    correlationLabel !== "none" ||
+    recommendedAction !== "log";
+
+  if (!shouldCreateIncident) {
+    return null;
+  }
+
+  const incident = {
+    id: incidentIdSeq++,
+    type: event.type || "unknown",
+    user: event.user || "unknown",
+    riskScore,
+    severity,
+    action: recommendedAction,
+    status: "pending_review",
+    assignedTo: null,
+    sla: severity === "critical" ? "BREACH" : severity === "high" ? "WATCH" : "OK",
+    ip: event.ip || "unknown",
+    amount: Number(event.amount || 0),
+    reasonCodes,
+    correlationLabel,
+    trendLabel: event.velocitySpike ? "spike" : "none",
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  };
+
+  incidentStore.unshift(incident);
+
+  createActionEntry({
+    incidentId: incident.id,
+    user: incident.user,
+    action: recommendedAction,
+    status: "pending_review",
+    reason: `Auto-created from ${incident.type} event`,
+    operator: "Risk Engine"
+  });
+
+  return incident;
+}
+
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+
+wss.on("connection", (ws) => {
+  ws.send(JSON.stringify({ type: "incidents_updated", data: incidentStore }));
+  ws.send(JSON.stringify({ type: "actions_updated", data: actionStore }));
+  ws.send(JSON.stringify({ type: "events_updated", data: eventStore.slice(0, 30) }));
+});
+
+app.get("/health", (req, res) => {
+  res.json({ ok: true, service: "SignalDesk", ws: true });
+});
+
+app.get("/api/incidents", (req, res) => {
+  res.json(incidentStore);
+});
+
+app.get("/api/actions", (req, res) => {
+  res.json(actionStore);
+});
+
+app.get("/api/events", (req, res) => {
+  res.json(eventStore.slice(0, 50));
+});
+
+app.get("/api/summary", (req, res) => {
+  const incidents = incidentStore.slice(0, 20);
+  const actions = actionStore.slice(0, 20);
+  const events = eventStore.slice(0, 20);
+
+  const critical = incidents.filter((x) => x.severity === "critical").length;
+  const high = incidents.filter((x) => x.severity === "high").length;
+  const pending = incidents.filter((x) => x.status === "pending_review").length;
+  const executed = actions.filter((x) => x.status === "executed").length;
+
+  const latestIncident = incidents[0] || null;
+  const latestEvent = events[0] || null;
+
+  let summary = "System stable. No meaningful risk pressure detected.";
+  let recommendation = "Continue monitoring.";
+
+  if (critical > 0) {
+    summary = `Critical pressure detected across ${critical} incident(s).`;
+    recommendation = pending > 0
+      ? "Prioritize immediate review or execute containment."
+      : "Containment appears underway. Verify operator actions.";
+  } else if (high > 0) {
+    summary = `Elevated risk detected across ${high} high-severity incident(s).`;
+    recommendation = "Review suspicious activity and prepare containment.";
+  } else if (incidents.length > 0) {
+    summary = `Low-to-medium incident activity detected across ${incidents.length} case(s).`;
+    recommendation = "Continue review and watch for correlation patterns.";
+  }
+
+  if (latestIncident && latestIncident.correlationLabel && latestIncident.correlationLabel !== "none") {
+    summary += ` Correlation: ${latestIncident.correlationLabel}.`;
+  }
+
+  if (latestIncident) {
+    summary += ` Latest case: ${latestIncident.user} / ${latestIncident.type} / ${latestIncident.severity}.`;
+  } else if (latestEvent) {
+    summary += ` Latest signal: ${latestEvent.user} / ${latestEvent.type}.`;
+  }
+
+  return res.json({
+    ok: true,
+    summary,
+    recommendation,
+    stats: {
+      critical,
+      high,
+      pending,
+      executed,
+      incidents: incidents.length,
+      actions: actions.length,
+      events: events.length
+    }
+  });
+});
+
+app.get("/api/metrics", (req, res) => {
+  const recentEvents = eventStore.slice(0, 20).reverse();
+  const recentIncidents = incidentStore.slice(0, 20).reverse();
+
+  const riskSeries = recentEvents.map((e, i) => ({
+    t: i + 1,
+    value: Number(e.risk || 0)
+  }));
+
+  const incidentSeries = recentIncidents.map((x, i) => ({
+    t: i + 1,
+    value: Number(x.riskScore || 0),
+    severity: x.severity || "low"
+  }));
+
+  return res.json({
+    ok: true,
+    riskSeries,
+    incidentSeries,
+    counters: {
+      totalEvents: eventStore.length,
+      totalIncidents: incidentStore.length,
+      totalActions: actionStore.length,
+      criticalOpen: incidentStore.filter(x => x.severity === "critical" && x.status === "pending_review").length
+    }
+  });
+});
+
+app.get("/api/cases/:id", (req, res) => {
+  const incident = findIncidentById(req.params.id);
+  if (!incident) {
+    return res.status(404).json({ ok: false, error: "Incident not found" });
+  }
+  res.json({ ok: true, incident });
+});
+
+app.post("/api/cases/:id/action", (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action, operator } = req.body || {};
+
+    const allowed = ["approve", "execute", "reject", "reverse"];
+    if (!allowed.includes(action)) {
+      return res.status(400).json({ ok: false, error: "Invalid action" });
+    }
+
+    const incident = findIncidentById(id);
+    if (!incident) {
+      return res.status(404).json({ ok: false, error: "Incident not found" });
+    }
+
+    const statusMap = {
+      approve: "approved",
+      execute: "executed",
+      reject: "rejected",
+      reverse: "reversed"
+    };
+
+    incident.status = statusMap[action];
+    incident.updatedAt = nowIso();
+    incident.lastOperator = operator || "operator";
+
+    const actionEntry = createActionEntry({
+      incidentId: incident.id,
+      user: incident.user,
+      action,
+      status: statusMap[action],
+      reason: `Operator action on incident #${incident.id}`,
+      operator: operator || "operator"
+    });
+
+    broadcast("case_updated", incident);
+    broadcast("actions_updated", actionStore);
+    broadcast("incidents_updated", incidentStore);
+
+    res.json({
+      ok: true,
+      incident,
+      actionEntry
+    });
+  } catch (err) {
+    console.error("case action failed:", err);
+    res.status(500).json({ ok: false, error: "Failed to update case action" });
+  }
+});
+
+app.post("/event", (req, res) => {
+  try {
+    const payload = req.body || {};
+    const event = {
+      id: eventStore.length + 1,
+      type: payload.type || "unknown",
+      user: payload.user || "unknown",
+      attempts: Number(payload.attempts || 0),
+      amount: Number(payload.amount || 0),
+      ip: payload.ip || "unknown",
+      risk: Number(payload.risk || 0),
+      geoMismatch: Boolean(payload.geoMismatch),
+      velocitySpike: Boolean(payload.velocitySpike),
+      createdAt: nowIso()
+    };
+
+    eventStore.unshift(event);
+
+    const incident = createIncidentFromEvent(event);
+
+    broadcast("events_updated", eventStore.slice(0, 30));
+
+    if (incident) {
+      broadcast("incident_created", incident);
+      broadcast("incidents_updated", incidentStore);
+      broadcast("actions_updated", actionStore);
+    }
+
+    res.json({
+      ok: true,
+      event,
+      incidentCreated: Boolean(incident),
+      incident: incident || null
+    });
+  } catch (err) {
+    console.error("/event failed:", err);
+    res.status(500).json({ ok: false, error: "Failed to process event" });
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`SignalDesk running on http://localhost:${PORT}`);
+});

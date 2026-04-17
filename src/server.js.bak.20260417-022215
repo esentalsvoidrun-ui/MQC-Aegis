@@ -1,0 +1,149 @@
+import http from "http";
+import express from "express";
+import { WebSocketServer } from "ws";
+
+const app = express();
+app.use(express.json());
+app.use(express.static("public_dashboard"));
+
+const PORT = process.env.PORT || 3000;
+
+const incidentStore = [
+  {
+    id: 1,
+    type: "payment",
+    user: "combo-user",
+    riskScore: 91,
+    severity: "critical",
+    action: "block",
+    status: "pending_review",
+    assignedTo: null,
+    sla: "BREACH",
+    ip: "unknown",
+    amount: 12000,
+    reasonCodes: ["RISK_OVER_85", "UNSEEN_IP", "HIGH_AMOUNT"],
+    correlationLabel: "multi-signal attack pattern",
+    trendLabel: "none",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+];
+
+const actionStore = [
+  {
+    id: 1,
+    incidentId: 1,
+    user: "combo-user",
+    action: "block",
+    status: "pending_review",
+    reason: "Seeded test incident",
+    operator: "Risk Engine",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+];
+
+function broadcast(type, data) {
+  if (!wss) return;
+  const msg = JSON.stringify({ type, data });
+  for (const client of wss.clients) {
+    if (client.readyState === 1) {
+      client.send(msg);
+    }
+  }
+}
+
+function findIncidentById(id) {
+  return incidentStore.find((x) => String(x.id) === String(id));
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+
+wss.on("connection", (ws) => {
+  ws.send(JSON.stringify({ type: "incidents_updated", data: incidentStore }));
+  ws.send(JSON.stringify({ type: "actions_updated", data: actionStore }));
+});
+
+app.get("/health", (req, res) => {
+  res.json({ ok: true, service: "SignalDesk", ws: true });
+});
+
+app.get("/api/incidents", (req, res) => {
+  res.json(incidentStore);
+});
+
+app.get("/api/actions", (req, res) => {
+  res.json(actionStore);
+});
+
+app.get("/api/cases/:id", (req, res) => {
+  const incident = findIncidentById(req.params.id);
+  if (!incident) {
+    return res.status(404).json({ ok: false, error: "Incident not found" });
+  }
+  res.json({ ok: true, incident });
+});
+
+app.post("/api/cases/:id/action", (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action, operator } = req.body || {};
+
+    const allowed = ["approve", "execute", "reject", "reverse"];
+    if (!allowed.includes(action)) {
+      return res.status(400).json({ ok: false, error: "Invalid action" });
+    }
+
+    const incident = findIncidentById(id);
+    if (!incident) {
+      return res.status(404).json({ ok: false, error: "Incident not found" });
+    }
+
+    const statusMap = {
+      approve: "approved",
+      execute: "executed",
+      reject: "rejected",
+      reverse: "reversed"
+    };
+
+    incident.status = statusMap[action];
+    incident.updatedAt = nowIso();
+    incident.lastOperator = operator || "operator";
+
+    const actionEntry = {
+      id: actionStore.length + 1,
+      incidentId: incident.id,
+      user: incident.user,
+      action,
+      status: statusMap[action],
+      reason: `Operator action on incident #${incident.id}`,
+      operator: operator || "operator",
+      createdAt: nowIso(),
+      updatedAt: nowIso()
+    };
+
+    actionStore.unshift(actionEntry);
+
+    broadcast("case_updated", incident);
+    broadcast("actions_updated", actionStore);
+    broadcast("incidents_updated", incidentStore);
+
+    res.json({
+      ok: true,
+      incident,
+      actionEntry
+    });
+  } catch (err) {
+    console.error("case action failed:", err);
+    res.status(500).json({ ok: false, error: "Failed to update case action" });
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`SignalDesk running on http://localhost:${PORT}`);
+});

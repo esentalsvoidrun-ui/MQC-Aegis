@@ -1,0 +1,191 @@
+const wsUrl =
+  location.protocol === "https:"
+    ? `wss://${location.host}`
+    : `ws://${location.host}`;
+
+const incidentList = document.getElementById("incidentList");
+const actionList = document.getElementById("actionList");
+const summaryBox = document.getElementById("aiSummary");
+const authStatus = document.getElementById("authStatus");
+const connectionStatus = document.getElementById("connection-status");
+const liveFeed = document.getElementById("liveFeed");
+
+function esc(v) {
+  return String(v ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function badgeClass(severity) {
+  if (severity === "critical") return "background:#8b0000;color:#fff;";
+  if (severity === "high") return "background:#b45309;color:#fff;";
+  if (severity === "medium") return "background:#1d4ed8;color:#fff;";
+  return "background:#334155;color:#fff;";
+}
+
+function actionClass(action) {
+  if (action === "block") return "background:#7f1d1d;color:#fff;";
+  if (action === "manual_review") return "background:#92400e;color:#fff;";
+  if (action === "rate_limit") return "background:#1e3a8a;color:#fff;";
+  return "background:#374151;color:#fff;";
+}
+
+function renderIncident(item) {
+  return `
+    <div style="border:1px solid rgba(255,255,255,0.12);border-left:4px solid ${
+      item.severity === "critical" ? "#ef4444" :
+      item.severity === "high" ? "#f59e0b" :
+      item.severity === "medium" ? "#3b82f6" : "#64748b"
+    };border-radius:14px;padding:12px;margin-bottom:10px;background:rgba(15,23,42,.75);box-shadow:${
+      item.severity === "critical" ? "0 0 20px rgba(239,68,68,.18)" : "none"
+    };">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">
+        <strong>${esc(item.type || "unknown")} • ${esc(item.user || "anonymous")}</strong>
+        <span style="padding:4px 8px;border-radius:999px;font-size:12px;${badgeClass(item.severity)}">${esc(item.severity)}</span>
+      </div>
+      <div style="margin-top:8px;font-size:13px;opacity:.92;">
+        Risk Score: <strong>${esc(item.riskScore)}</strong> |
+        Action: <span style="padding:3px 8px;border-radius:999px;${actionClass(item.action)}">${esc(item.action)}</span>
+      </div>
+      <div style="margin-top:8px;font-size:13px;">
+        Correlation: <strong>${esc(item.correlationLabel)}</strong> |
+        Trend: <strong>${esc(item.trendLabel)}</strong>
+      </div>
+      <div style="margin-top:8px;font-size:12px;opacity:.85;">
+        Why: ${esc((item.reasonCodes || []).join(", ") || "No reason codes")}
+      </div>
+      <div style="margin-top:8px;font-size:11px;opacity:.65;">
+        ${esc(item.createdAt || "")}
+      </div>
+    </div>
+  `;
+}
+
+function renderAction(item) {
+  return `
+    <div style="border:1px solid rgba(255,255,255,0.10);border-radius:12px;padding:10px;margin-bottom:8px;background:rgba(2,6,23,.72);">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+        <strong>${esc(item.action)}</strong>
+        <span style="font-size:12px;opacity:.75;">${esc(item.createdAt || "")}</span>
+      </div>
+      <div style="font-size:13px;opacity:.9;margin-top:4px;">
+        Reason: ${esc(item.reason || "n/a")}
+      </div>
+      <div style="font-size:12px;opacity:.7;margin-top:4px;">
+        Incident ID: ${esc(item.incidentId || "-")}
+      </div>
+    </div>
+  `;
+}
+
+function renderFeed(item) {
+  return `
+    <div style="padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.08);">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+        <strong>${esc(item.type)} • ${esc(item.user)}</strong>
+        <span style="padding:3px 8px;border-radius:999px;${badgeClass(item.severity)}">${esc(item.severity)}</span>
+      </div>
+      <div style="font-size:13px;opacity:.9;margin-top:4px;">
+        riskScore=${esc(item.riskScore)} | trend=${esc(item.trendLabel)} | correlation=${esc(item.correlationLabel)} | action=${esc(item.action)}
+      </div>
+    </div>
+  `;
+}
+
+function prepend(container, html, max = 10) {
+  if (!container) return;
+  container.insertAdjacentHTML("afterbegin", html);
+  while (container.children.length > max) {
+    container.removeChild(container.lastElementChild);
+  }
+}
+
+async function loadInitial() {
+  try {
+    const [incRes, actRes, sumRes] = await Promise.all([
+      fetch("/api/incidents"),
+      fetch("/api/actions"),
+      fetch("/api/summary")
+    ]);
+
+    const incidents = await incRes.json();
+    const actions = await actRes.json();
+    const summary = await sumRes.json();
+
+    if (incidentList) {
+      incidentList.innerHTML = incidents.slice(0, 10).map(renderIncident).join("");
+    }
+    if (actionList) {
+      actionList.innerHTML = actions.slice(0, 10).map(renderAction).join("");
+    }
+    if (summaryBox) {
+      summaryBox.textContent = summary.summary || "No summary available.";
+    }
+    if (authStatus) {
+      authStatus.textContent = "Operator mode active";
+    }
+  } catch (err) {
+    console.error(err);
+    if (summaryBox) summaryBox.textContent = "Failed to load summary.";
+  }
+}
+
+function connectWs() {
+  const ws = new WebSocket(wsUrl);
+
+  ws.onopen = () => {
+    if (connectionStatus) connectionStatus.textContent = "WS connected";
+  };
+
+  ws.onclose = () => {
+    if (connectionStatus) connectionStatus.textContent = "WS disconnected";
+    setTimeout(connectWs, 1500);
+  };
+
+  ws.onerror = () => {
+    if (connectionStatus) connectionStatus.textContent = "WS error";
+  };
+
+  ws.onmessage = (msg) => {
+    try {
+      const data = JSON.parse(msg.data);
+
+      if (data.type === "bootstrap") {
+        if (incidentList && data.payload?.incidents) {
+          incidentList.innerHTML = data.payload.incidents.map(renderIncident).join("");
+        }
+        if (actionList && data.payload?.actions) {
+          actionList.innerHTML = data.payload.actions.map(renderAction).join("");
+        }
+        if (summaryBox && data.payload?.summary) {
+          summaryBox.textContent = data.payload.summary;
+        }
+      }
+
+      if (data.type === "event" && liveFeed) {
+        prepend(liveFeed, renderFeed(data.payload), 12);
+      }
+
+      if (data.type === "incident" && incidentList) {
+        prepend(incidentList, renderIncident(data.payload), 10);
+      }
+
+      if (data.type === "action" && actionList) {
+        prepend(actionList, renderAction(data.payload), 10);
+      }
+
+      fetch("/api/summary")
+        .then((r) => r.json())
+        .then((s) => {
+          if (summaryBox) summaryBox.textContent = s.summary || "No summary available.";
+        })
+        .catch(() => {});
+    } catch (err) {
+      console.error("WS parse error:", err);
+    }
+  };
+}
+
+loadInitial();
+connectWs();

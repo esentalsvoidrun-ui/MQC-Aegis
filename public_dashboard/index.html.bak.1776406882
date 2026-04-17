@@ -1,0 +1,680 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SignalDesk // Risk War Room</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Inter, Arial, sans-serif;
+      background: radial-gradient(circle at top left, #13254d, #070b18 60%, #04060f);
+      color: #eef3ff;
+    }
+
+    .wrap {
+      max-width: 1280px;
+      margin: 24px auto;
+      padding: 0 20px;
+    }
+
+    .hero, .card, .stat {
+      background: rgba(16, 24, 48, 0.86);
+      border: 1px solid rgba(120, 160, 255, 0.15);
+      border-radius: 18px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    }
+
+    .hero {
+      padding: 24px;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 28px;
+    }
+
+    .muted {
+      color: #9fb0d0;
+      font-size: 14px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .stat {
+      padding: 18px;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      color: #95a7cb;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+
+    .stat-value {
+      font-size: 36px;
+      font-weight: 700;
+    }
+
+    .card {
+      padding: 20px;
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      gap: 16px;
+    }
+
+    .panel-title {
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .panel-sub {
+      color: #90a2c5;
+      font-size: 14px;
+      margin-top: 4px;
+    }
+
+    .filters {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .btn, .action-btn {
+      border: 1px solid rgba(120, 160, 255, 0.3);
+      background: rgba(52, 84, 148, 0.25);
+      color: #eef3ff;
+      border-radius: 12px;
+      padding: 10px 14px;
+      cursor: pointer;
+    }
+
+    .btn.primary {
+      background: rgba(70, 120, 220, 0.35);
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border-radius: 14px;
+      border: 1px solid rgba(120, 160, 255, 0.12);
+    }
+
+    .queue-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .queue-table th,
+    .queue-table td {
+      padding: 14px 12px;
+      border-bottom: 1px solid rgba(120, 160, 255, 0.08);
+      text-align: left;
+    }
+
+    .queue-table th {
+      color: #97a9cf;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .queue-table tbody tr {
+      cursor: pointer;
+    }
+
+    .queue-table tbody tr:hover {
+      background: rgba(90, 120, 200, 0.08);
+    }
+
+    .selected-case {
+      outline: 2px solid rgba(90, 160, 255, 0.95);
+      background: rgba(90, 160, 255, 0.08);
+    }
+
+    .actions-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+      flex-wrap: wrap;
+    }
+
+    .layout-grid {
+      display: grid;
+      grid-template-columns: 1.45fr 0.95fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .detail-card {
+      padding: 20px;
+      background: rgba(16, 24, 48, 0.86);
+      border: 1px solid rgba(120, 160, 255, 0.15);
+      border-radius: 18px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    }
+
+    .detail-title {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .detail-sub {
+      color: #90a2c5;
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .detail-block {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(120, 160, 255, 0.12);
+      border-radius: 14px;
+      padding: 12px;
+    }
+
+    .detail-block.full {
+      grid-column: 1 / -1;
+    }
+
+    .detail-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #95a7cb;
+      margin-bottom: 8px;
+    }
+
+    .detail-value {
+      font-size: 15px;
+      color: #eef3ff;
+      word-break: break-word;
+    }
+
+    .reason-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .reason-pill {
+      display: inline-flex;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(120, 160, 255, 0.2);
+      background: rgba(70, 120, 220, 0.14);
+      font-size: 12px;
+      color: #dce7ff;
+    }
+
+    .detail-empty {
+      color: #9fb0d0;
+      padding: 8px 0;
+    }
+
+    .side-stack {
+      display: grid;
+      gap: 18px;
+    }
+
+    .feed-card {
+      padding: 20px;
+      background: rgba(16, 24, 48, 0.86);
+      border: 1px solid rgba(120, 160, 255, 0.15);
+      border-radius: 18px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    }
+
+    .feed-title-main {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .feed-sub {
+      color: #90a2c5;
+      font-size: 14px;
+      margin-bottom: 14px;
+    }
+
+    .feed-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .feed-item {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(120, 160, 255, 0.12);
+      border-radius: 14px;
+      padding: 12px;
+    }
+
+    .feed-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .feed-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #eef3ff;
+    }
+
+    .feed-time {
+      font-size: 12px;
+      color: #8ea2cb;
+      white-space: nowrap;
+    }
+
+    .feed-meta {
+      font-size: 12px;
+      color: #b6c6e3;
+      margin-bottom: 6px;
+    }
+
+    .feed-reason {
+      font-size: 13px;
+      color: #dce7ff;
+      line-height: 1.4;
+    }
+
+    .feed-empty {
+      color: #9fb0d0;
+      padding: 8px 0;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .sev-critical {
+      color: #ffd8d8;
+      background: rgba(255, 72, 72, 0.18);
+      border-color: rgba(255, 72, 72, 0.34);
+      box-shadow: inset 0 0 18px rgba(255, 72, 72, 0.08);
+    }
+
+    .sev-high {
+      color: #ffe5c7;
+      background: rgba(255, 140, 0, 0.18);
+      border-color: rgba(255, 140, 0, 0.30);
+    }
+
+    .sev-medium {
+      color: #fff0b8;
+      background: rgba(230, 190, 40, 0.18);
+      border-color: rgba(230, 190, 40, 0.30);
+    }
+
+    .sev-low {
+      color: #d9f3df;
+      background: rgba(60, 180, 90, 0.16);
+      border-color: rgba(60, 180, 90, 0.28);
+    }
+
+    .status-pending_review {
+      color: #ffe7b7;
+      background: rgba(212, 156, 38, 0.16);
+      border-color: rgba(212, 156, 38, 0.30);
+    }
+
+    .status-approved {
+      color: #dff7e6;
+      background: rgba(62, 172, 102, 0.16);
+      border-color: rgba(62, 172, 102, 0.28);
+    }
+
+    .status-executed {
+      color: #d8f1ff;
+      background: rgba(52, 152, 219, 0.18);
+      border-color: rgba(52, 152, 219, 0.30);
+    }
+
+    .status-rejected {
+      color: #ffd8d8;
+      background: rgba(220, 70, 70, 0.18);
+      border-color: rgba(220, 70, 70, 0.30);
+    }
+
+    .status-reversed {
+      color: #eadcff;
+      background: rgba(152, 100, 240, 0.18);
+      border-color: rgba(152, 100, 240, 0.30);
+    }
+
+    .action-block {
+      color: #ffdcdc;
+      background: rgba(230, 60, 60, 0.18);
+      border-color: rgba(230, 60, 60, 0.30);
+    }
+
+    .action-manual_review {
+      color: #ffe8c8;
+      background: rgba(255, 145, 0, 0.18);
+      border-color: rgba(255, 145, 0, 0.30);
+    }
+
+    .action-rate_limit {
+      color: #d9f0ff;
+      background: rgba(70, 145, 255, 0.16);
+      border-color: rgba(70, 145, 255, 0.28);
+    }
+
+    .action-log {
+      color: #dbe9d7;
+      background: rgba(90, 150, 90, 0.14);
+      border-color: rgba(90, 150, 90, 0.24);
+    }
+
+    .queue-table tbody tr.row-critical {
+      background: rgba(255, 72, 72, 0.045);
+    }
+
+    .queue-table tbody tr.row-high {
+      background: rgba(255, 140, 0, 0.04);
+    }
+
+    .queue-table tbody tr.row-medium {
+      background: rgba(230, 190, 40, 0.035);
+    }
+
+    .queue-table tbody tr.row-low {
+      background: rgba(60, 180, 90, 0.025);
+    }
+
+    .queue-table tbody tr.selected-case {
+      outline: 2px solid rgba(90, 160, 255, 0.95);
+      background: rgba(90, 160, 255, 0.12) !important;
+    }
+
+    .reason-pill {
+      display: inline-flex;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(120, 160, 255, 0.2);
+      background: rgba(70, 120, 220, 0.14);
+      font-size: 12px;
+      color: #dce7ff;
+      font-weight: 700;
+    }
+
+    .reason-risk {
+      background: rgba(220, 70, 70, 0.16);
+      border-color: rgba(220, 70, 70, 0.30);
+      color: #ffd8d8;
+    }
+
+    .reason-geo,
+    .reason-ip {
+      background: rgba(255, 145, 0, 0.16);
+      border-color: rgba(255, 145, 0, 0.30);
+      color: #ffe9cb;
+    }
+
+    .reason-correlation {
+      background: rgba(120, 100, 255, 0.16);
+      border-color: rgba(120, 100, 255, 0.30);
+      color: #e7deff;
+    }
+
+    .reason-money {
+      background: rgba(52, 152, 219, 0.16);
+      border-color: rgba(52, 152, 219, 0.28);
+      color: #d9f1ff;
+    }
+
+    .brief {
+      margin-bottom: 18px;
+      padding: 18px 20px;
+      background: rgba(18, 30, 58, 0.92);
+      border: 1px solid rgba(120, 160, 255, 0.18);
+      border-radius: 18px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.22);
+    }
+
+    .brief-label {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      color: #95a7cb;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+    }
+
+    .brief-text {
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.5;
+      margin-bottom: 10px;
+    }
+
+    .brief-rec {
+      color: #b3c2df;
+      font-size: 14px;
+    }
+
+    .mini-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    .mini-card {
+      padding: 18px 20px;
+      background: rgba(16, 24, 48, 0.86);
+      border: 1px solid rgba(120, 160, 255, 0.15);
+      border-radius: 18px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    }
+
+    .mini-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .mini-sub {
+      color: #90a2c5;
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+
+    .chart-wrap {
+      height: 180px;
+      position: relative;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div class="muted">● LIVE DECISION ENGINE</div>
+      <h1>SignalDesk // Risk War Room</h1>
+      <div class="muted">Minimal live control room. No theater. Just signal and action.</div>
+    </div>
+
+    <div class="brief">
+      <div class="brief-label">AI Situation Brief</div>
+      <div class="brief-text" id="aiSummaryText">Loading situation brief...</div>
+      <div class="brief-rec" id="aiSummaryRecommendation">Recommendation: waiting for signal.</div>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-label">Critical</div>
+        <div class="stat-value" id="criticalCard">0</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Pending</div>
+        <div class="stat-value" id=id="pendingCard"0</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Executed</div>
+        <div class="stat-value" id="executedCard"</div>
+      </div>
+    </div>
+
+    <div class="mini-grid">
+      <div class="mini-card">
+        <div class="mini-title">Risk Trend</div>
+        <div class="mini-sub">Latest incoming event pressure.</div>
+        <div class="chart-wrap">
+          <canvas id="riskTrend"></canvas>
+        </div>
+      </div>
+
+      <div class="mini-card">
+        <div class="mini-title">Incident Pressure</div>
+        <div class="mini-sub">Recent flagged cases over time.</div>
+        <div class="chart-wrap">
+          <canvas id="incidentPressure"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="layout-grid">
+      <div class="card">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Decision Queue</div>
+<div style="margin-top:20px;">
+  <h3 style="margin-bottom:10px;">Live Incidents</h3>
+  <div id="incidentList"></div>
+</div>
+
+<div style="margin-top:20px;">
+  <h3 style="margin-bottom:10px;">Action Log</h3>
+  <div id="actionList"></div>
+</div>
+
+<div style="margin-top:20px;">
+  <h3 style="margin-bottom:10px;">AI Summary</h3>
+  <div id="summaryBox"></div>
+</div>          
+  <div class="panel-sub">Oldest danger first. No polite chaos.</div>
+          </div>
+          <div class="filters">
+            <select class="btn" id="statusFilter">
+              <option value="">All status</option>
+              <option value="pending_review">pending_review</option>
+              <option value="approved">approved</option>
+              <option value="executed">executed</option>
+              <option value="rejected">rejected</option>
+              <option value="reversed">reversed</option>
+            </select>
+
+            <select class="btn" id="actionFilter">
+              <option value="">All action</option>
+              <option value="block">block</option>
+              <option value="manual_review">manual_review</option>
+              <option value="rate_limit">rate_limit</option>
+              <option value="log">log</option>
+            </select>
+
+            <select class="btn" id="severityFilter">
+              <option value="">All severity</option>
+              <option value="critical">critical</option>
+              <option value="high">high</option>
+              <option value="medium">medium</option>
+              <option value="low">low</option>
+            </select>
+
+            <input class="btn" id="searchFilter" type="text" placeholder="Search user / type / ip" />
+
+            <select class="btn" id="sortFilter">
+              <option value="risk_desc">Risk ↓</option>
+              <option value="newest">Newest</option>
+              <option value="oldest">Oldest</option>
+              <option value="severity_desc">Severity ↓</option>
+            </select>
+
+            <button class="btn" id="exportBtn">Export Snapshot</button>
+            <button class="btn primary" id="refreshBtn" onclick="location.reload()">Refresh</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="queue-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>User</th>
+                <th>Action</th>
+                <th>Status</th>
+                <th>Risk</th>
+                <th>Severity</th>
+                <th>SLA</th>
+              </tr>
+            </thead>
+            <tbody id="decisionQueueBody"></tbody>
+          </table>
+        </div>
+
+        <div class="actions-row">
+          <button class="action-btn" data-action="approve">Approve</button>
+          <button class="action-btn" data-action="execute">Execute</button>
+          <button class="action-btn" data-action="reject">Reject</button>
+          <button class="action-btn" data-action="reverse">Reverse</button>
+        </div>
+      </div>
+
+      <div class="side-stack">
+        <div class="detail-card">
+          <div class="detail-title">Case Detail</div>
+          <div class="detail-sub">Operator view. Why this case exists.</div>
+          <div id="caseDetail"></div>
+            <div class="detail-empty">Loading case detail...</div>
+          </div>
+        </div>
+
+        <div class="feed-card">
+          <div class="feed-title-main">Action Log</div>
+          <div class="feed-sub">What operators and the engine did most recently.</div>
+          <div class="feed-list" id="actionLog"></div>
+            <div class="feed-empty">Loading actions...</div>
+          </div>
+        </div>
+
+        <div class="feed-card">
+          <div class="feed-title-main">Live Event Feed</div>
+          <div class="feed-sub">Incoming signals hitting the engine right now.</div>
+          <div class="feed-list" id="liveEventFeed"></div>
+            <div class="feed-empty">Loading events...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

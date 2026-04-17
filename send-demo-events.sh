@@ -1,22 +1,15 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# 10 demo-events med lite variation
-for i in {1..10}
-do
-  # Slumpa decision
-  if (( RANDOM % 2 )); then
-    decision="approved"
-  else
-    decision="denied"
-  fi
-
-  # Skicka event
-  curl -s -X POST http://localhost:3000/logs \
+echo "Sending login spike..."
+for i in {1..6}; do
+  curl -s -X POST http://localhost:3000/event \
     -H "Content-Type: application/json" \
-    -d "{\"event\":\"demo_event_$i\",\"decision\":\"$decision\"}"
-
-  # Kort paus så det blir fly-in effekt
-  sleep 0.3
+    -d '{"type":"login","user":"combo-user","attempts":5,"ip":"unknown","risk":20,"velocitySpike":true}' > /dev/null
 done
 
-echo "10 demo-events skickade!"
+echo "Sending high-risk payment..."
+curl -s -X POST http://localhost:3000/event \
+  -H "Content-Type: application/json" \
+  -d '{"type":"payment","user":"combo-user","amount":12000,"ip":"unknown","risk":35,"geoMismatch":true}' > /dev/null
+
+echo "Done."

@@ -1,0 +1,67 @@
+import http from "http";
+import express from "express";
+import { WebSocketServer } from "ws";
+
+const app = express();
+app.use(express.json());
+app.use(express.static("public_dashboard"));
+
+const PORT = 3000;
+
+const globalEvents = [];
+
+function calculateRisk(e) {
+  let score = e.risk || 0;
+  if (e.type === "login" && (e.attempts || 0) > 3) score += 20;
+  if (e.amount && e.amount > 5000) score += 30;
+  if (e.ip === "unknown") score += 10;
+  return Math.min(score, 100);
+}
+
+function detectCorrelation(events) {
+  const recent = events.slice(-10);
+
+  const logins = recent.filter(e => e.type === "login").length;
+  const payments = recent.filter(e => e.amount > 5000).length;
+
+  if (logins >= 5 && payments >= 1) {
+    return { level: "critical", reason: "Multi-signal attack pattern" };
+  }
+
+  return null;
+}
+
+app.post("/event", (req, res) => {
+  const event = { ...req.body, timestamp: Date.now() };
+
+  const risk = calculateRisk(event);
+  let action = risk > 80 ? "block" : "log";
+
+  const incident = {
+    ...event,
+    riskScore: risk,
+    action,
+    severity: risk > 80 ? "critical" : "low"
+  };
+
+  globalEvents.push(incident);
+
+  const correlation = detectCorrelation(globalEvents);
+  incident.correlation = correlation;
+
+  res.json({
+    ok: true,
+    incident
+  });
+});
+
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
+});
+
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+
+server.listen(PORT, () => {
+  console.log("🚀 SignalDesk running on http://localhost:3000");
+});

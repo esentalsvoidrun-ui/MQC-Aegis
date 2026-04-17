@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SignalDesk // Risk War Room</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Inter, Arial, sans-serif;
+      background: radial-gradient(circle at top left, #13254d, #070b18 60%, #04060f);
+      color: #eef3ff;
+    }
+
+    .wrap {
+      max-width: 1280px;
+      margin: 24px auto;
+      padding: 0 20px;
+    }
+
+    .hero, .card, .stat {
+      background: rgba(16, 24, 48, 0.86);
+      border: 1px solid rgba(120, 160, 255, 0.15);
+      border-radius: 18px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    }
+
+    .hero {
+      padding: 24px;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 28px;
+    }
+
+    .muted {
+      color: #9fb0d0;
+      font-size: 14px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .stat {
+      padding: 18px;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      color: #95a7cb;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+
+    .stat-value {
+      font-size: 36px;
+      font-weight: 700;
+    }
+
+    .card {
+      padding: 20px;
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      gap: 16px;
+    }
+
+    .panel-title {
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .panel-sub {
+      color: #90a2c5;
+      font-size: 14px;
+      margin-top: 4px;
+    }
+
+    .filters {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .btn, .action-btn {
+      border: 1px solid rgba(120, 160, 255, 0.3);
+      background: rgba(52, 84, 148, 0.25);
+      color: #eef3ff;
+      border-radius: 12px;
+      padding: 10px 14px;
+      cursor: pointer;
+    }
+
+    .btn.primary {
+      background: rgba(70, 120, 220, 0.35);
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border-radius: 14px;
+      border: 1px solid rgba(120, 160, 255, 0.12);
+    }
+
+    .queue-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .queue-table th,
+    .queue-table td {
+      padding: 14px 12px;
+      border-bottom: 1px solid rgba(120, 160, 255, 0.08);
+      text-align: left;
+    }
+
+    .queue-table th {
+      color: #97a9cf;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .queue-table tbody tr {
+      cursor: pointer;
+    }
+
+    .queue-table tbody tr:hover {
+      background: rgba(90, 120, 200, 0.08);
+    }
+
+    .selected-case {
+      outline: 2px solid rgba(90, 160, 255, 0.95);
+      background: rgba(90, 160, 255, 0.08);
+    }
+
+    .actions-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+      flex-wrap: wrap;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div class="muted">● LIVE DECISION ENGINE</div>
+      <h1>SignalDesk // Risk War Room</h1>
+      <div class="muted">Minimal live control room. No theater. Just signal and action.</div>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-label">Critical</div>
+        <div class="stat-value" id="statCritical">0</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Pending</div>
+        <div class="stat-value" id="statPending">0</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Executed</div>
+        <div class="stat-value" id="statExecuted">0</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Decision Queue</div>
+          <div class="panel-sub">Oldest danger first. No polite chaos.</div>
+        </div>
+        <div class="filters">
+          <button class="btn primary" id="refreshBtn" onclick="location.reload()">Refresh</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="queue-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>User</th>
+              <th>Action</th>
+              <th>Status</th>
+              <th>Risk</th>
+              <th>Severity</th>
+              <th>SLA</th>
+            </tr>
+          </thead>
+          <tbody id="decisionQueueBody"></tbody>
+        </table>
+      </div>
+
+      <div class="actions-row">
+        <button class="action-btn" data-action="approve">Approve</button>
+        <button class="action-btn" data-action="execute">Execute</button>
+        <button class="action-btn" data-action="reject">Reject</button>
+        <button class="action-btn" data-action="reverse">Reverse</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

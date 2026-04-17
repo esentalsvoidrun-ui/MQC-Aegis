@@ -1,0 +1,133 @@
+window.selectedCaseId = null;
+
+function qs(id) {
+  return document.getElementById(id);
+}
+
+async function apiGet(url) {
+  const res = await fetch(url);
+  return res.json();
+}
+
+function renderQueue(items) {
+  const body = qs("decisionQueueBody");
+  if (!body) return;
+
+  body.innerHTML = items.map((item) => `
+    <tr data-case-id="${item.id}">
+      <td>#${item.id}</td>
+      <td>${item.user}</td>
+      <td>${item.action}</td>
+      <td>${item.status}</td>
+      <td>${item.riskScore}</td>
+      <td>${item.severity}</td>
+      <td>${item.sla}</td>
+    </tr>
+  `).join("");
+
+  bindQueueRows();
+}
+
+function renderStats(items, actions) {
+  const critical = items.filter(x => x.severity === "critical").length;
+  const pending = items.filter(x => x.status === "pending_review").length;
+  const executed = actions.filter(x => x.status === "executed").length;
+
+  if (qs("statCritical")) qs("statCritical").textContent = critical;
+  if (qs("statPending")) qs("statPending").textContent = pending;
+  if (qs("statExecuted")) qs("statExecuted").textContent = executed;
+}
+
+function bindQueueRows() {
+  const rows = document.querySelectorAll("[data-case-id]");
+  rows.forEach((row) => {
+    row.onclick = () => {
+      window.selectedCaseId = row.dataset.caseId;
+      rows.forEach((r) => r.classList.remove("selected-case"));
+      row.classList.add("selected-case");
+      console.log("Selected case:", window.selectedCaseId);
+    };
+  });
+}
+
+window.sendCaseAction = async function (action) {
+  if (!window.selectedCaseId) {
+    alert("Välj ett case först.");
+    return;
+  }
+
+  console.log("Sending action:", action, "for case:", window.selectedCaseId);
+
+  try {
+    const res = await fetch(`/api/cases/${window.selectedCaseId}/action`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        action,
+        operator: "robert"
+      })
+    });
+
+    const data = await res.json();
+    console.log("API response:", data);
+
+    if (!data.ok) {
+      alert(data.error || "Action failed");
+      return;
+    }
+
+    await loadDashboard();
+  } catch (err) {
+    console.error("sendCaseAction error:", err);
+    alert("Request failed");
+  }
+};
+
+function bindActionButtons() {
+  document.querySelectorAll(".action-btn").forEach((btn) => {
+    btn.onclick = () => {
+      const action = btn.dataset.action;
+      window.sendCaseAction(action);
+    };
+  });
+}
+
+async function loadDashboard() {
+  const incidents = await apiGet("/api/incidents");
+  const actions = await apiGet("/api/actions");
+
+  renderQueue(incidents);
+  renderStats(incidents, actions);
+
+  if (!window.selectedCaseId && incidents.length) {
+    window.selectedCaseId = String(incidents[0].id);
+    const first = document.querySelector(`[data-case-id="${window.selectedCaseId}"]`);
+    if (first) first.classList.add("selected-case");
+  }
+}
+
+function connectWS() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}`);
+
+  ws.onmessage = async (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (["case_updated", "actions_updated", "incidents_updated"].includes(msg.type)) {
+        await loadDashboard();
+      }
+    } catch (e) {
+      console.error("WS parse error", e);
+    }
+  };
+
+  ws.onclose = () => setTimeout(connectWS, 2000);
+}
+
+window.addEventListener("load", async () => {
+  bindActionButtons();
+  await loadDashboard();
+  connectWS();
+});
