@@ -11,3 +11,9 @@ backups/
 data/
 db/
 .DS_Store
+.github/
+restart-financial.sh
+signaldesk.db.bak.*
+src/server.financial.broken.js
+src/server.financial.js
+src/server.js.save.*
