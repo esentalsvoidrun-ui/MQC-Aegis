@@ -1,58 +1,78 @@
-# MQC Aegis
+# SignalDesk
 
-**From fragmented signals to operational action.**
+**SignalDesk** is a live AI decision engine for operational risk events.
 
-MQC Aegis is a real-time decision engine for correlated risk. It ingests live events, detects patterns across signals, merges repeated hostile behavior, prioritizes operator attention, and recommends action in real time.
+It ingests raw events, normalizes them, scores risk, detects trend and correlation patterns, decides actions, stores results, and streams everything live to a dashboard.
 
 ## What it does
 
-- receives live risk events
-- scores and classifies incidents
-- correlates multi-signal behavior
-- merges repeated hostile patterns into persistent cases
-- recommends actions such as:
-  - `block`
-  - `manual_review`
-  - `rate_limit`
-  - `log`
+SignalDesk processes incoming events such as:
+
+- login attempts
+- payment events
+- suspicious velocity spikes
+- geo mismatches
+- repeated attempts
+- high-risk multi-signal patterns
+
+For each event, SignalDesk can:
+
+- normalize the payload
+- calculate a risk score
+- detect trend anomalies
+- detect multi-signal correlation
+- decide an action
+- store incidents and actions in SQLite
+- update the live dashboard over WebSocket
 
 ## Core capabilities
 
-- real-time event ingestion
-- correlation logic
-- incident creation and merge
-- operator actions
-- live dashboard
-- incident drilldown
-- filtering and search
+- Live incident engine
+- Decision engine with action output
+- Trend and correlation detection
+- SQLite persistence
+- Filterable API endpoints
+- Summary endpoint
+- Live WebSocket dashboard
+- API key protection for write access
 
-## Stack
+## Live deployment
 
-### Backend
-- Node.js
-- Express
-- WebSocket (`ws`)
-- SQLite
+Public dashboard:
 
-### Frontend
-- HTML
-- Vanilla JavaScript
+`https://mqc-aegis-production.up.railway.app`
 
-## Local setup
+## API overview
 
-### Install dependencies
+### Public read endpoints
 
-```bash
-npm install
-```
-### Start the server
+- `GET /health`
+- `GET /api/incidents`
+- `GET /api/actions`
+- `GET /api/summary`
 
-```bash
-node src/server.js
-```
+### Protected write endpoint
 
-### Open in browser
+- `POST /event`
 
-```text
-http://localhost:3000
-```
+`POST /event` requires an API key in the request header:
+
+`x-api-key: YOUR_SIGNALDESK_API_KEY`
+
+---
+
+## Example event flow
+
+Raw event input:
+
+```json
+{
+  "type": "payment",
+  "user": "anna",
+  "amount": 25000,
+  "risk": 65,
+  "attempts": 4,
+  "ip": "unknown",
+  "geoMismatch": true,
+  "velocitySpike": true
+}
