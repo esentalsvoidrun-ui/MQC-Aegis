@@ -371,29 +371,32 @@ function buildDivergenceExplanation(comp, latestEventPayload) {
 }
 
 function renderDecisionPanel() {
+  const summary = state.latestSummary || {};
+  const actions = state.actions || [];
+  const incidents = [];
   const panelFocus = pickPanelFocus(summary, incidents, actions);
-  const panelCurrentDecision = decisionFromFocus(panelFocus, summary?.recommendation || 'manual_review');
-  const panelMQCDecision = mqcFromFocus(panelFocus, 'quiet');
+  const panelCurrentDecision = decisionFromFocus(panelFocus, summary?.recommendation || "manual_review");
+  const panelMQCDecision = mqcFromFocus(panelFocus, "quiet");
   const panelDivergence = divergenceFromFocus(panelFocus, panelCurrentDecision, panelMQCDecision);
   const panelExplanation = explanationFromFocus(panelFocus, panelCurrentDecision, panelMQCDecision);
 
-  const comp = state.comparisons[0];
+  const comp = state.comparisons[0] || panelFocus || null;
   const latest = state.latestEventPayload;
   markDivergenceTiles(comp);
 
-  const currentAction = comp?.finalAction || "waiting";
+    const currentAction = comp?.finalAction || panelCurrentDecision || "waiting";
   $("currentDecision").textContent = currentAction;
   $("currentDecision").className = `big ${toneClass(currentAction)}`;
   $("currentDecisionSub").textContent =
     comp ? `source ${comp.finalSource || "signaldesk"} · risk ${comp.mergedRiskScore ?? "n/a"}` : "No final decision yet";
 
-  $("signaldeskDecision").textContent = comp?.localAction || "—";
-  $("signaldeskDecision").className = `big ${toneClass(comp?.localAction || "ok")}`;
+  $("signaldeskDecision").textContent = comp?.localAction || panelCurrentDecision || "—";
+  $("signaldeskDecision").className = `big ${toneClass(comp?.localAction || panelCurrentDecision || "ok")}`;
   $("signaldeskSub").textContent =
     comp ? `${comp.localLabel || "none"} · risk ${comp.localRiskScore ?? "n/a"}` : "No baseline decision yet";
 
-  $("mqcDecision").textContent = comp?.mqcRecommendedAction || "quiet";
-  $("mqcDecision").className = `big ${toneClass(comp?.mqcRecommendedAction || "ok")}`;
+  $("mqcDecision").textContent = comp?.mqcRecommendedAction || panelMQCDecision || "quiet";
+  $("mqcDecision").className = `big ${toneClass(comp?.mqcRecommendedAction || panelMQCDecision || "ok")}`;
   $("mqcSub").textContent =
     comp ? `${comp.mqcLabel || "mqc-shadow"} · Δ ${comp.mqcRiskDelta ?? 0}` : "No MQC opinion yet";
 
@@ -412,7 +415,15 @@ function renderDecisionPanel() {
 
   renderMemoryFactors(comp, latest);
 
-  const divergence = buildDivergenceExplanation(comp, latest);
+    const divergence = comp
+    ? buildDivergenceExplanation(comp, latest)
+    : {
+        headline: panelDivergence,
+        headlineClass: panelDivergence === "Diverged" ? "explain-bad" : "explain-good",
+        sub: panelDivergence === "Diverged" ? "MQC changed the shape of the decision" : "Both engines point the same way",
+        text: panelExplanation
+      };
+
   $("divergenceHeadline").textContent = divergence.headline;
   $("divergenceHeadline").className = `big ${divergence.headlineClass}`;
   $("divergenceSub").textContent = divergence.sub;
