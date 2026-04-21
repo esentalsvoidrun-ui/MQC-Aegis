@@ -1,626 +1,472 @@
-const $ = (id) => document.getElementById(id);
-
 const state = {
-  events: [],
+  selectedMode: "shadow",
+  summary: null,
+  incidents: [],
   actions: [],
-  comparisons: [],
-  latestEventPayload: null,
-  latestSummary: null
+  lastEngineResponse: null,
+  lastScenario: null
 };
 
+const el = (id) => document.getElementById(id);
 
-
-function pickPanelFocus(summary, incidents, actions) {
-  if (summary && summary.panelFocus) return summary.panelFocus;
-
-  const merged = [
-    ...(Array.isArray(actions) ? actions.map(x => ({ ...x, __kind: "action" })) : []),
-    ...(Array.isArray(incidents) ? incidents.map(x => ({ ...x, __kind: "incident" })) : [])
-  ];
-
-  const ts = (x) => {
-    const raw = x?.createdAt || x?.timestamp || 0;
-    const n = new Date(raw).getTime();
-    return Number.isFinite(n) ? n : 0;
-  };
-
-  merged.sort((a, b) => ts(b) - ts(a));
-
-  const isInteresting = (x) => {
-    const text = [
-      x?.divergenceLabel,
-      x?.divergenceState,
-      x?.divergenceExplanation,
-      x?.mqcSuggestion,
-      x?.mqcDecision,
-      x?.mqcLabel,
-      x?.reason,
-      x?.reasonCodes ? x.reasonCodes.join(" ") : "",
-      x?.status,
-      x?.label,
-      x?.title,
-      x?.type
-    ].filter(Boolean).join(" ").toLowerCase();
-
-    return (
-      text.includes("diverged") ||
-      text.includes("divergence") ||
-      text.includes("mqc") ||
-      text.includes("cluster") ||
-      text.includes("pattern")
-    );
-  };
-
-  return merged.find(isInteresting) || merged[0] || null;
+function safeText(value, fallback = "—") {
+  if (value === undefined || value === null || value === "") return fallback;
+  return String(value);
 }
 
-function decisionFromFocus(focus, fallbackValue = "manual_review") {
-  return (
-    focus?.finalAction ||
-    focus?.decision ||
-    focus?.action ||
-    focus?.statusSuggested ||
-    fallbackValue
-  );
+function formatAction(action = "") {
+  return String(action || "observe").replaceAll("_", " ");
 }
 
-function mqcFromFocus(focus, fallbackValue = "quiet") {
-  return (
-    focus?.mqcSuggestion ||
-    focus?.mqcDecision ||
-    focus?.mqcLabel ||
-    fallbackValue
-  );
+function actionClass(action = "") {
+  return `action-${String(action || "log")}`;
 }
 
-function divergenceFromFocus(focus, currentDecision, mqcDecision) {
-  const text = [
-    focus?.divergenceExplanation,
-    focus?.divergenceLabel,
-    focus?.divergenceState,
-    focus?.reason,
-    focus?.status
-  ].filter(Boolean).join(" ").toLowerCase();
+function severityClass(sev = "") {
+  return `sev-${String(sev || "low")}`;
+}
 
-  if (
-    text.includes("diverged") ||
-    text.includes("divergence") ||
-    text.includes("converged+mqc") ||
-    (currentDecision && mqcDecision && currentDecision !== mqcDecision)
-  ) {
-    return "Diverged";
+function shortTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function topAction(actions = []) {
+  const map = new Map();
+  for (const item of actions) {
+    const key = item.action || "log";
+    map.set(key, (map.get(key) || 0) + 1);
   }
-  return "Aligned";
-}
-
-function explanationFromFocus(focus, currentDecision, mqcDecision) {
-  if (focus?.divergenceExplanation) return focus.divergenceExplanation;
-
-  const reasons = Array.isArray(focus?.reasonCodes) ? focus.reasonCodes.join(", ") : "";
-  if (currentDecision !== mqcDecision) {
-    return `SignalDesk chose ${currentDecision} while MQC suggested ${mqcDecision}. ${reasons}`.trim();
-  }
-  return `Both engines pointed in the same direction. ${reasons}`.trim();
-}
-function escapeHtml(v) {
-  return String(v ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
-function toneClass(value) {
-  if (value === "critical" || value === "block" || value === "unstable") return "bad";
-  if (value === "high" || value === "manual_review" || value === "shadow" || value === "review") return "warn";
-  if (value === "medium" || value === "rate_limit") return "info";
-  return "ok";
-}
-
-function clearEl(el) {
-  while (el.firstChild) el.removeChild(el.firstChild);
-}
-
-function createListItem(title, meta, sub = "", tone = "info", badge = "") {
-  const li = document.createElement("li");
-  li.className = "item";
-  li.innerHTML = `
-    <div class="row">
-      <div class="title">${escapeHtml(title)}</div>
-      <div style="display:flex;gap:8px;align-items:center;">
-        ${badge ? `<span class="badge ${badge==='diverged'?'div':'alg'}">${badge}</span>` : ``}
-        <span class="pill ${tone}">${escapeHtml(meta)}</span>
-      </div>
-    </div>
-    ${sub ? `<div class="tiny" style="margin-top:8px;">${escapeHtml(sub)}</div>` : ""}
-  `;
-  return li;
-}
-
-function renderTopMetrics(summary) {
-  const drift = summary?.drift || {};
-  const identity = summary?.identity || {};
-
-  $("status").textContent = drift.status || "unknown";
-  $("status").className = `metric ${toneClass(drift.status || "unknown")}`;
-  $("statusSub").textContent =
-    drift.status === "unstable" ? "Adaptive recalibration required" : "System coherent";
-
-  $("drift").textContent = Number(drift.driftScore || 0).toFixed(2);
-  $("baselineRisk").textContent = identity.baselineRisk ?? 0;
-  $("eventsLoaded").textContent = state.events.length || 0;
-
-  const avgRisk = state.events.length
-    ? Math.round(state.events.reduce((sum, e) => sum + Number(e.risk || 0), 0) / state.events.length)
-    : 0;
-  $("avgRisk").textContent = avgRisk;
-
-  const counts = {};
-  for (const a of state.actions) counts[a.type] = (counts[a.type] || 0) + 1;
-  const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || "log";
-  $("topAction").textContent = top;
-}
-
-function renderReflection(summary) {
-  $("reflection").textContent = summary?.summary || "No summary yet.";
-}
-
-function renderEventList() {
-  const list = $("eventList");
-  clearEl(list);
-
-  state.events.slice(0, 14).forEach((e) => {
-    const risk = Number(e.risk || 0);
-    const tone = risk >= 85 ? "bad" : risk >= 60 ? "warn" : risk >= 35 ? "info" : "ok";
-    const sub = `${e.ip || "unknown"} · ${e.type || "unknown"} · attempts ${e.attempts || 0} · amount ${e.amount || 0}`;
-    list.appendChild(createListItem(`${e.type} • ${e.user}`, `risk ${risk}`, sub, tone));
-  });
-}
-
-function renderDistribution() {
-  const bars = $("distributionBars");
-  clearEl(bars);
-
-  const buckets = {
-    "0–44 / low": 0,
-    "45–71 / medium": 0,
-    "72–89 / high": 0,
-    "90–100 / critical": 0
-  };
-
-  for (const e of state.events) {
-    const r = Number(e.risk || 0);
-    if (r >= 90) buckets["90–100 / critical"]++;
-    else if (r >= 72) buckets["72–89 / high"]++;
-    else if (r >= 45) buckets["45–71 / medium"]++;
-    else buckets["0–44 / low"]++;
-  }
-
-  const total = Math.max(1, state.events.length);
-
-  Object.entries(buckets).forEach(([label, value]) => {
-    const pct = (value / total) * 100;
-    const row = document.createElement("div");
-    row.className = "bar-row";
-    row.innerHTML = `
-      <div class="bar-head">
-        <span>${escapeHtml(label)}</span>
-        <span>${value}</span>
-      </div>
-      <div class="bar-track">
-        <div class="bar-fill" style="width:${pct.toFixed(1)}%"></div>
-      </div>
-    `;
-    bars.appendChild(row);
-  });
-}
-
-function reasonBullets(comp, latestEventPayload) {
-  const out = [];
-  if (!comp) {
-    out.push("No comparison event has arrived yet.");
-    return out;
-  }
-
-  out.push(`SignalDesk local action: ${comp.localAction || "log"}.`);
-  out.push(`Final action: ${comp.finalAction || "log"}.`);
-
-  if (comp.differs) out.push("MQC and SignalDesk diverged on this event.");
-  else out.push("MQC and SignalDesk were aligned enough to keep the same final posture.");
-
-  if (comp.promotedByMQC) out.push("MQC promoted the decision severity.");
-  if (comp.mqcRiskDelta) out.push(`MQC added risk delta ${comp.mqcRiskDelta}.`);
-
-  const memFactors = latestEventPayload?.memoryFactors || comp.payload?.memoryFactors || [];
-  if (memFactors.length) out.push(`Memory modifiers: ${memFactors.join(", ")}.`);
-
-  const gateReason = latestEventPayload?.gate?.reason;
-  if (gateReason) out.push(`Gate result: ${gateReason}.`);
-
-  return out;
-}
-
-function renderMemoryFactors(comp, latestEventPayload) {
-  const wrap = $("memoryFactors");
-  clearEl(wrap);
-
-  const factors = latestEventPayload?.memoryFactors || comp?.payload?.memoryFactors || [];
-  $("memoryNote").textContent = factors.length
-    ? "Historical user context changed this decision."
-    : "No historical modifiers on the latest decision.";
-
-  if (!factors.length) {
-    const span = document.createElement("span");
-    span.className = "pill info";
-    span.textContent = "no memory factors";
-    wrap.appendChild(span);
-    return;
-  }
-
-  factors.forEach((f) => {
-    const span = document.createElement("span");
-    span.className = `pill ${f.includes("discount") ? "ok" : "warn"}`;
-    span.textContent = f;
-    wrap.appendChild(span);
-  });
-}
-
-function nextActionFromContext(comp, latestEventPayload) {
-  if (!comp) return { title: "Observe", sub: "Need more live data" };
-
-  const finalAction = comp.finalAction || "log";
-  const user = comp.user || "unknown";
-  const source = comp.finalSource || "signaldesk";
-  const trust = latestEventPayload?.userMemory?.trustScore ?? comp.payload?.userMemory?.trustScore ?? null;
-
-  if (finalAction === "block") {
-    return { title: "Contain", sub: `Keep ${user} blocked and inspect source ${source}` };
-  }
-  if (finalAction === "manual_review") {
-    return { title: "Review", sub: `Open analyst review for ${user}` };
-  }
-  if (finalAction === "rate_limit") {
-    return { title: "Throttle", sub: `Rate-limit traffic and monitor retries` };
-  }
-  if (trust !== null && trust >= 70) {
-    return { title: "Allow", sub: `Trusted user posture; keep monitoring quietly` };
-  }
-  return { title: "Observe", sub: "No escalation required yet" };
-}
-
-function markDivergenceTiles(comp) {
-  const isDiv = !!comp?.differs;
-  const tiles = [
-    document.getElementById("currentDecision")?.closest(".decision-tile"),
-    document.getElementById("signaldeskDecision")?.closest(".decision-tile"),
-    document.getElementById("mqcDecision")?.closest(".decision-tile"),
-    document.getElementById("nextAction")?.closest(".decision-tile"),
-  ].filter(Boolean);
-
-  tiles.forEach(t => {
-    t.classList.remove("divergence", "aligned", "pulse", "quiet");
-    if (!comp) return;
-    if (isDiv) t.classList.add("divergence", "pulse");
-    else t.classList.add("aligned");
-    if (comp?.mqcRecommendedAction == null) t.classList.add("quiet");
-  });
-}
-
-function buildDivergenceExplanation(comp, latestEventPayload) {
-  if (!comp) {
-    return {
-      headline: "Waiting",
-      headlineClass: "info",
-      sub: "No comparison yet",
-      text: "The panel has not received a comparison event yet."
-    };
-  }
-
-  const payload = comp.payload || {};
-  const mqc = payload.mqc || {};
-  const memoryFactors = latestEventPayload?.memoryFactors || payload.memoryFactors || [];
-  const trust = latestEventPayload?.userMemory?.trustScore ?? payload.userMemory?.trustScore;
-  const lines = [];
-
-  if (!comp.differs) {
-    lines.push(`SignalDesk and MQC did not materially disagree on this event.`);
-    lines.push(`SignalDesk local action stayed at ${comp.localAction || "log"} and final action stayed at ${comp.finalAction || "log"}.`);
-    if (mqc.recommendedAction) {
-      lines.push(`MQC also suggested ${mqc.recommendedAction}, so no promotion was needed.`);
-    } else {
-      lines.push(`MQC stayed quiet, which means no extra pattern was strong enough to override the baseline decision.`);
+  let winner = "log";
+  let best = -1;
+  for (const [key, count] of map.entries()) {
+    if (count > best) {
+      winner = key;
+      best = count;
     }
-    if (memoryFactors.length) lines.push(`Historical context still mattered: ${memoryFactors.join(", ")}.`);
-    if (typeof trust === "number") lines.push(`Current trust score for this user is ${trust}.`);
-    return {
-      headline: "Aligned",
-      headlineClass: "explain-good",
-      sub: "Both engines point the same way",
-      text: lines.join(" ")
-    };
   }
+  return winner;
+}
 
-  lines.push(`SignalDesk started from ${comp.localAction || "log"} with label ${comp.localLabel || "none"}.`);
-  lines.push(`MQC added delta ${comp.mqcRiskDelta || 0} and suggested ${comp.mqcRecommendedAction || "no change"} via ${comp.mqcLabel || "shadow"}.`);
-
-  if (comp.promotedByMQC) {
-    lines.push(`MQC promoted the decision from ${comp.localAction || "log"} to ${comp.finalAction || "log"}.`);
-  } else {
-    lines.push(`The engines diverged in reasoning, but the final action stayed at ${comp.finalAction || "log"}.`);
+function getBuckets(incidents = []) {
+  const buckets = { low: 0, medium: 0, high: 0, critical: 0 };
+  for (const item of incidents) {
+    const risk = Number(item.riskScore || 0);
+    if (risk >= 90) buckets.critical += 1;
+    else if (risk >= 72) buckets.high += 1;
+    else if (risk >= 45) buckets.medium += 1;
+    else buckets.low += 1;
   }
+  return buckets;
+}
 
-  if (memoryFactors.length) lines.push(`Historical pressure also shaped the result: ${memoryFactors.join(", ")}.`);
+function setBar(id, count, total) {
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  const node = el(id);
+  if (node) node.style.width = `${pct}%`;
+}
 
-  if (typeof trust === "number") {
-    if (trust <= 40) lines.push(`Low trust score (${trust}) made escalation easier to justify.`);
-    else if (trust >= 70) lines.push(`High trust score (${trust}) softened part of the pressure, but not enough to remove concern.`);
-    else lines.push(`Mid trust score (${trust}) left the engines to lean mostly on live behavior.`);
-  }
+function renderSummary() {
+  const summary = state.summary || {};
+  const drift = summary.drift || {};
+  const incidents = state.incidents || [];
+  const actions = state.actions || [];
+  const status = safeText(drift.status, "unknown");
+  const avgRisk = Number(drift.currentRisk || 0);
+  const driftScore = Number(drift.driftScore || 0);
 
-  if ((comp.mqcLabel || "").includes("payment")) {
-    lines.push(`This divergence was likely driven by payment pattern recognition rather than a single raw threshold.`);
-  } else if ((comp.mqcLabel || "").includes("auth") || (comp.eventType || "").includes("login")) {
-    lines.push(`This divergence was likely driven by authentication pattern logic such as cascade or repeated suspicious access.`);
-  }
+  el("statusValue").textContent = status;
+  el("statusValue").className = `value status-${status}`;
+  el("statusSub").textContent = status === "unstable"
+    ? "Adaptive recalibration required"
+    : "Operating within tolerance";
 
-  return {
-    headline: "Diverged",
-    headlineClass: "explain-bad",
-    sub: "MQC changed the shape of the decision",
-    text: lines.join(" ")
-  };
+  el("driftValue").textContent = driftScore.toFixed(2);
+  el("baselineRiskValue").textContent = safeText(drift.baselineRisk, "0");
+  el("eventsLoadedValue").textContent = String(incidents.length);
+  el("avgRiskValue").textContent = avgRisk.toFixed(0);
+
+  const winner = topAction(actions);
+  el("topActionValue").textContent = formatAction(winner);
+  el("topActionValue").className = `value ${actionClass(winner)}`;
+
+  el("systemReflection").textContent = summary.summary || "No system reflection available yet.";
 }
 
 function renderDecisionPanel() {
-  const summary = state.latestSummary || {};
-  const actions = state.actions || [];
-  const incidents = [];
-  const panelFocus = pickPanelFocus(summary, incidents, actions);
-  const panelCurrentDecision = decisionFromFocus(panelFocus, summary?.recommendation || "manual_review");
-  const panelMQCDecision = mqcFromFocus(panelFocus, "quiet");
-  const panelDivergence = divergenceFromFocus(panelFocus, panelCurrentDecision, panelMQCDecision);
-  const panelExplanation = explanationFromFocus(panelFocus, panelCurrentDecision, panelMQCDecision);
+  const latest = state.incidents[0];
+  const engine = state.lastEngineResponse;
+  const currentAction = latest?.action || "observe";
 
-  const comp = state.comparisons[0] || panelFocus || null;
-  const latest = state.latestEventPayload;
-  markDivergenceTiles(comp);
+  el("currentDecisionWord").textContent = formatAction(currentAction).toUpperCase();
+  el("currentDecisionWord").className = `decision-word ${actionClass(currentAction)}`;
+  el("currentDecisionSub").textContent = latest
+    ? `Severity ${safeText(latest.severity, "unknown")} · User ${safeText(latest.user, "anonymous")} · ${safeText(latest.type, "unknown")}`
+    : "No live decision yet.";
 
-    const currentAction = comp?.finalAction || panelCurrentDecision || "waiting";
-  $("currentDecision").textContent = currentAction;
-  $("currentDecision").className = `big ${toneClass(currentAction)}`;
-  $("currentDecisionSub").textContent =
-    comp ? `source ${comp.finalSource || "signaldesk"} · risk ${comp.mergedRiskScore ?? "n/a"}` : "No final decision yet";
+  const reasonList = el("reasonList");
+  const memoryList = el("memoryList");
+  const runtimeList = el("runtimeList");
 
-  $("signaldeskDecision").textContent = comp?.localAction || panelCurrentDecision || "—";
-  $("signaldeskDecision").className = `big ${toneClass(comp?.localAction || panelCurrentDecision || "ok")}`;
-  $("signaldeskSub").textContent =
-    comp ? `${comp.localLabel || "none"} · risk ${comp.localRiskScore ?? "n/a"}` : "No baseline decision yet";
+  reasonList.innerHTML = "";
+  memoryList.innerHTML = "";
+  runtimeList.innerHTML = "";
 
-  $("mqcDecision").textContent = comp?.mqcRecommendedAction || panelMQCDecision || "quiet";
-  $("mqcDecision").className = `big ${toneClass(comp?.mqcRecommendedAction || panelMQCDecision || "ok")}`;
-  $("mqcSub").textContent =
-    comp ? `${comp.mqcLabel || "mqc-shadow"} · Δ ${comp.mqcRiskDelta ?? 0}` : "No MQC opinion yet";
+  const reasons = Array.isArray(latest?.reasons) ? latest.reasons : [];
+  if (reasons.length) {
+    for (const reason of reasons.slice(0, 5)) {
+      const li = document.createElement("li");
+      li.textContent = reason;
+      reasonList.appendChild(li);
+    }
+  } else {
+    reasonList.innerHTML = "<li>No explicit reason codes yet.</li>";
+  }
 
-  const next = nextActionFromContext(comp, latest);
-  $("nextAction").textContent = next.title;
-  $("nextAction").className = `big ${toneClass(next.title.toLowerCase())}`;
-  $("nextActionSub").textContent = next.sub;
-
-  const reasonList = $("reasonList");
-  clearEl(reasonList);
-  reasonBullets(comp, latest).forEach((r) => {
+  const memoryFacts = [
+    latest ? `Recent action: ${formatAction(latest.action)}` : "No recent action",
+    latest ? `Risk score: ${latest.riskScore}` : "No risk score loaded",
+    state.lastScenario ? `Last scenario: ${state.lastScenario}` : "No scenario injected",
+  ];
+  memoryFacts.forEach((item) => {
     const li = document.createElement("li");
-    li.textContent = r;
-    reasonList.appendChild(li);
+    li.textContent = item;
+    memoryList.appendChild(li);
   });
 
-  renderMemoryFactors(comp, latest);
+  const runtimeFacts = [
+    `UI mode request: ${state.selectedMode}`,
+    `Loaded incidents: ${state.incidents.length}`,
+    `Loaded actions: ${state.actions.length}`
+  ];
+  runtimeFacts.forEach((item) => {
+    const li = document.createElement("li");
+    li.textContent = item;
+    runtimeList.appendChild(li);
+  });
 
-    const divergence = comp
-    ? buildDivergenceExplanation(comp, latest)
-    : {
-        headline: panelDivergence,
-        headlineClass: panelDivergence === "Diverged" ? "explain-bad" : "explain-good",
-        sub: panelDivergence === "Diverged" ? "MQC changed the shape of the decision" : "Both engines point the same way",
-        text: panelExplanation
+  const sdWord = el("signaldeskWord");
+  const sdSub = el("signaldeskSub");
+  const mqcWord = el("mqcWord");
+  const mqcSub = el("mqcSub");
+  const divWord = el("divergenceWord");
+  const divSub = el("divergenceSub");
+  const nextActionWord = el("nextActionWord");
+  const nextActionSub = el("nextActionSub");
+
+  if (engine?.comparison) {
+    const sd = engine.comparison.signaldesk || {};
+    const mqc = engine.comparison.mqc || {};
+    const divergence = Number(engine.comparison.divergence || 0);
+
+    sdWord.textContent = formatAction(sd.action || "log");
+    sdWord.className = `value ${actionClass(sd.action)}`;
+    sdSub.textContent = `Score ${safeText(sd.score, "0")} · ${safeText(sd.explanation, "SignalDesk view")}`;
+
+    mqcWord.textContent = formatAction(mqc.action || "log");
+    mqcWord.className = `value ${actionClass(mqc.action)}`;
+    mqcSub.textContent = `Score ${safeText(mqc.score, "0")} · ${safeText(mqc.explanation, "MQC view")}`;
+
+    const diverged = (sd.action !== mqc.action) || divergence >= 10;
+    divWord.textContent = diverged ? "Diverged" : "Aligned";
+    divWord.className = `value ${diverged ? "action-block" : "action-log"}`;
+    divSub.textContent = diverged
+      ? `Signal gap ${divergence}. SignalDesk chose ${formatAction(sd.action)} while MQC suggested ${formatAction(mqc.action)}.`
+      : `Engines broadly agree. Score gap ${divergence}.`;
+
+    nextActionWord.textContent = diverged ? "Manual review" : formatAction(latest?.action || "observe");
+    nextActionWord.className = `value ${diverged ? "action-manual_review" : actionClass(latest?.action)}`;
+    nextActionSub.textContent = diverged
+      ? "Engine disagreement detected. Human review is the sensible next move."
+      : "No serious divergence detected.";
+  } else if (engine?.components) {
+    sdWord.textContent = `score ${safeText(engine.components.signaldesk, "0")}`;
+    sdWord.className = "value";
+    sdSub.textContent = "Hybrid source: SignalDesk weight";
+
+    mqcWord.textContent = `score ${safeText(engine.components.mqc, "0")}`;
+    mqcWord.className = "value";
+    mqcSub.textContent = "Hybrid source: MQC weight";
+
+    divWord.textContent = "Blended";
+    divWord.className = "value action-rate_limit";
+    divSub.textContent = "Hybrid mode merges both engines into one final call.";
+
+    nextActionWord.textContent = formatAction(latest?.action || "observe");
+    nextActionWord.className = `value ${actionClass(latest?.action)}`;
+    nextActionSub.textContent = "Weighted decision currently active.";
+  } else {
+    sdWord.textContent = latest ? formatAction(latest.action) : "—";
+    sdWord.className = `value ${actionClass(latest?.action)}`;
+    sdSub.textContent = "No side-by-side comparison returned.";
+
+    mqcWord.textContent = state.selectedMode === "mqc" ? formatAction(latest?.action) : "—";
+    mqcWord.className = `value ${actionClass(latest?.action)}`;
+    mqcSub.textContent = state.selectedMode === "mqc"
+      ? "Direct MQC decision active."
+      : "Run a shadow scenario for divergence.";
+
+    divWord.textContent = "Pending";
+    divWord.className = "value";
+    divSub.textContent = "Inject a scenario in shadow mode to inspect engine disagreement.";
+
+    nextActionWord.textContent = formatAction(latest?.action || "observe");
+    nextActionWord.className = `value ${actionClass(latest?.action)}`;
+    nextActionSub.textContent = latest
+      ? `Current engine recommends ${formatAction(latest.action)}.`
+      : "Need more live data.";
+  }
+}
+
+function renderRiskDistribution() {
+  const buckets = getBuckets(state.incidents);
+  const total = state.incidents.length || 1;
+
+  el("countLow").textContent = String(buckets.low);
+  el("countMedium").textContent = String(buckets.medium);
+  el("countHigh").textContent = String(buckets.high);
+  el("countCritical").textContent = String(buckets.critical);
+
+  setBar("barLow", buckets.low, total);
+  setBar("barMedium", buckets.medium, total);
+  setBar("barHigh", buckets.high, total);
+  setBar("barCritical", buckets.critical, total);
+}
+
+function renderListFeed(targetId, rows, mapper) {
+  const root = el(targetId);
+  root.innerHTML = "";
+
+  if (!rows.length) {
+    root.innerHTML = `<div class="empty">No live rows yet.</div>`;
+    return;
+  }
+
+  for (const row of rows) {
+    root.appendChild(mapper(row));
+  }
+}
+
+function makeFeedRow(parts) {
+  const row = document.createElement("div");
+  row.className = "feed-row";
+  row.innerHTML = parts;
+  return row;
+}
+
+function renderFeeds() {
+  const incidents = state.incidents.slice(0, 6);
+  const actions = state.actions.slice(0, 6);
+
+  renderListFeed("decisionFeed", incidents, (item) => makeFeedRow(`
+    <div class="mono">${shortTime(item.createdAt)}</div>
+    <div>
+      <div><strong>${safeText(item.type, "unknown")}</strong> · ${safeText(item.user, "anonymous")}</div>
+      <div class="muted">${(item.reasons || []).slice(0, 2).join(" · ") || "No reason codes"}</div>
+    </div>
+    <div class="${severityClass(item.severity)}"><strong>${safeText(item.riskScore, 0)}</strong></div>
+    <div class="${actionClass(item.action)}"><strong>${formatAction(item.action)}</strong></div>
+  `));
+
+  renderListFeed("liveEventsFeed", incidents, (item) => makeFeedRow(`
+    <div class="mono">${shortTime(item.createdAt)}</div>
+    <div>
+      <div><strong>${safeText(item.user, "anonymous")}</strong> · ${safeText(item.type, "unknown")}</div>
+      <div class="muted">mode ${safeText(item.mode, "unknown")} · status ${safeText(item.status, "pending")}</div>
+    </div>
+    <div class="${severityClass(item.severity)}"><strong>${safeText(item.severity, "low")}</strong></div>
+    <div class="mono">risk ${safeText(item.riskScore, 0)}</div>
+  `));
+
+  renderListFeed("mqcFeed", actions, (item) => makeFeedRow(`
+    <div class="mono">${shortTime(item.createdAt)}</div>
+    <div>
+      <div><strong>${formatAction(item.action)}</strong></div>
+      <div class="muted">user ${safeText(item.user, "anonymous")} · mode ${safeText(item.mode, "unknown")}</div>
+    </div>
+    <div class="${severityClass(item.severity)}"><strong>${safeText(item.severity, "low")}</strong></div>
+    <div class="${actionClass(item.action)}"><strong>${formatAction(item.action)}</strong></div>
+  `));
+}
+
+async function fetchJson(url, options = undefined) {
+  const res = await fetch(url, options);
+  if (!res.ok) {
+    throw new Error(`${url} -> HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+async function loadModes() {
+  try {
+    const data = await fetchJson("/api/modes");
+    el("serverModeChip").textContent = `Server mode: ${safeText(data.current, "unknown")}`;
+  } catch {
+    el("serverModeChip").textContent = "Server mode: unavailable";
+  }
+}
+
+async function loadAll() {
+  try {
+    const [summary, incidentsData, actionsData] = await Promise.all([
+      fetchJson("/api/summary"),
+      fetchJson("/api/incidents"),
+      fetchJson("/api/actions")
+    ]);
+
+    state.summary = summary;
+    state.incidents = Array.isArray(incidentsData.items) ? [...incidentsData.items].reverse() : [];
+    state.actions = Array.isArray(actionsData.items) ? [...actionsData.items].reverse() : [];
+
+    renderSummary();
+    renderDecisionPanel();
+    renderRiskDistribution();
+    renderFeeds();
+  } catch (error) {
+    el("systemReflection").textContent = `Dashboard load error: ${error.message}`;
+  }
+}
+
+function scenarioPayload(name, mode) {
+  const base = { mode };
+
+  switch (name) {
+    case "trusted_user":
+      return {
+        ...base,
+        type: "login",
+        user: "trusted-user",
+        attempts: 1,
+        ip: "10.0.0.12",
+        risk: 12,
+        geoMismatch: false,
+        velocitySpike: false,
+        deviceTrusted: true
       };
-
-  $("divergenceHeadline").textContent = divergence.headline;
-  $("divergenceHeadline").className = `big ${divergence.headlineClass}`;
-  $("divergenceSub").textContent = divergence.sub;
-  $("divergenceExplanation").textContent = divergence.text;
-
-  const runtime = [];
-  if (latest?.engineMeta?.mode) runtime.push(`mode=${latest.engineMeta.mode}`);
-  if (latest?.engineMeta?.source) runtime.push(`source=${latest.engineMeta.source}`);
-  if (latest?.userMemory?.trustScore !== undefined) runtime.push(`trustScore=${latest.userMemory.trustScore}`);
-  if (comp?.differs) runtime.push("decision diverged");
-  if (comp?.promotedByMQC) runtime.push("mqc promoted action");
-  if (latest?.gate?.reason) runtime.push(`gate=${latest.gate.reason}`);
-
-  $("runtimeNotes").textContent = runtime.length
-    ? runtime.join(" | ")
-    : "Waiting for live decision context…";
+    case "borderline_review":
+      return {
+        ...base,
+        type: "login",
+        user: "borderline-user",
+        attempts: 4,
+        ip: "unknown",
+        risk: 46,
+        geoMismatch: false,
+        velocitySpike: true,
+        deviceTrusted: true
+      };
+    case "mqc_payment_cluster":
+      return {
+        ...base,
+        type: "payment",
+        user: "cluster-user",
+        amount: 25000,
+        ip: "unknown",
+        risk: 44,
+        geoMismatch: true,
+        velocitySpike: true,
+        deviceTrusted: false
+      };
+    case "auth_cascade":
+      return {
+        ...base,
+        type: "login",
+        user: "auth-cascade",
+        attempts: 7,
+        ip: "unknown",
+        risk: 61,
+        geoMismatch: true,
+        velocitySpike: true,
+        deviceTrusted: false
+      };
+    case "repeat_offender":
+      return {
+        ...base,
+        type: "login",
+        user: "repeat-offender",
+        attempts: 6,
+        ip: "unknown",
+        risk: 76,
+        geoMismatch: true,
+        velocitySpike: false,
+        deviceTrusted: false
+      };
+    case "known_user_new_ip":
+      return {
+        ...base,
+        type: "login",
+        user: "known-user",
+        attempts: 2,
+        ip: "new-ip",
+        risk: 31,
+        geoMismatch: true,
+        velocitySpike: false,
+        deviceTrusted: true
+      };
+    default:
+      return {
+        ...base,
+        type: "login",
+        user: "default-user",
+        attempts: 1,
+        ip: "unknown",
+        risk: 15,
+        geoMismatch: false,
+        velocitySpike: false,
+        deviceTrusted: true
+      };
+  }
 }
 
-function renderDecisionFeed() {
-  const feed = $("decisionFeed");
-  clearEl(feed);
+async function injectScenario(name) {
+  const payload = scenarioPayload(name, state.selectedMode);
+  state.lastScenario = name;
 
-  state.actions.slice(0, 14).forEach((a) => {
-    const tone = toneClass(a.type || "log");
-    const sub = `${a.engineSource || "signaldesk"} · ${a.reason || "no reason"} · ${a.status || "issued"}`;
-    feed.appendChild(createListItem(`${a.type} • ${a.targetUser}`, a.reason || "issued", sub, tone));
+  el("systemReflection").textContent = `Injecting scenario "${name}" in ${state.selectedMode} mode...`;
+
+  try {
+    const data = await fetchJson("/event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    state.lastEngineResponse = data.engine || null;
+    await loadAll();
+    el("systemReflection").textContent += `
+
+Last inject:
+${JSON.stringify(payload, null, 2)}`;
+  } catch (error) {
+    el("systemReflection").textContent = `Scenario injection failed: ${error.message}`;
+  }
+}
+
+function bindModes() {
+  document.querySelectorAll(".mode-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.selectedMode = btn.dataset.mode;
+      document.querySelectorAll(".mode-btn").forEach((x) => x.classList.remove("active"));
+      btn.classList.add("active");
+      renderDecisionPanel();
+    });
   });
 }
 
-function renderMQCFeed() {
-  const feed = $("mqcFeed");
-  clearEl(feed);
-
-  state.comparisons.slice(0, 14).forEach((c) => {
-    const tone = c.promotedByMQC ? "bad" : c.differs ? "warn" : "info";
-    const meta = c.differs ? "diverged" : "aligned";
-    const sub = `local ${c.localAction} → final ${c.finalAction} · mqc ${c.mqcRecommendedAction || "quiet"} · Δ ${c.mqcRiskDelta || 0}`;
-    feed.appendChild(createListItem(`${c.eventType} • ${c.user}`, meta, sub, tone, c.differs ? "diverged" : "aligned"));
+function bindScenarios() {
+  document.querySelectorAll(".scenario-btn").forEach((btn) => {
+    btn.addEventListener("click", () => injectScenario(btn.dataset.scenario));
   });
-}
-
-function renderAll() {
-  renderTopMetrics(state.latestSummary);
-  renderReflection(state.latestSummary);
-  renderEventList();
-  renderDistribution();
-  renderDecisionPanel();
-  renderDecisionFeed();
-  renderMQCFeed();
 }
 
 async function boot() {
-  try {
-    const [summary, actions, comps] = await Promise.all([
-      fetch("/api/summary").then(r => r.json()),
-      fetch("/api/actions").then(r => r.json()),
-      fetch("/api/mqc/compare").then(r => r.json())
-    ]);
-
-    state.latestSummary = summary;
-    state.actions = actions || [];
-    state.comparisons = comps || [];
-    renderAll();
-  } catch (err) {
-    $("reflection").textContent = "Boot error: " + err.message;
-  }
-}
-
-function updateFromEventResponse(payload) {
-  state.latestEventPayload = payload || null;
-  if (payload?.event) {
-    state.events.unshift(payload.event);
-    if (state.events.length > 20) state.events.pop();
-  }
-  if (payload?.action) {
-    state.actions.unshift(payload.action);
-    if (state.actions.length > 20) state.actions.pop();
-  }
-  if (payload?.comparison) {
-    state.comparisons.unshift(payload.comparison);
-    if (state.comparisons.length > 20) state.comparisons.pop();
-  }
-}
-
-function connectWs() {
-  const protocol = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${protocol}://${location.host}`);
-
-  ws.onmessage = (evt) => {
-    const msg = JSON.parse(evt.data);
-    const type = msg.type;
-    const payload = msg.payload || {};
-
-    if (type === "event") {
-      state.events.unshift(payload);
-      if (state.events.length > 20) state.events.pop();
-    }
-
-    if (type === "action") {
-      state.actions.unshift(payload);
-      if (state.actions.length > 20) state.actions.pop();
-    }
-
-    if (type === "mqc_compare") {
-      state.comparisons.unshift(payload);
-      if (state.comparisons.length > 20) state.comparisons.pop();
-    }
-
-    if (type === "identity") {
-      state.latestSummary = {
-        ...(state.latestSummary || {}),
-        drift: payload.drift,
-        identity: payload.identity,
-        summary: payload.reflection
-      };
-    }
-
-    renderAll();
-  };
-
-  ws.onclose = () => {
-    setTimeout(connectWs, 1500);
-  };
-}
-
-async function pollLatestDecisionContext() {
-  try {
-    const summary = await fetch("/api/summary").then(r => r.json());
-    state.latestSummary = summary;
-    renderAll();
-  } catch (_) {}
-}
-
-async function postEvent(json) {
-  const res = await fetch("/event", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(json)
-  });
-  const data = await res.json();
-  updateFromEventResponse(data);
-  renderAll();
-  return data;
-}
-
-async function runScenario(name) {
-  const log = $("scenarioLog");
-  log.textContent = `Running scenario: ${name} ...`;
-
-  try {
-    if (name === "trusted") {
-      await postEvent({ type: "login", user: "trusted-ui-user", attempts: 1, ip: "10.20.30.40", risk: 18, velocitySpike: false, geoMismatch: false });
-      await postEvent({ type: "payment", user: "trusted-ui-user", amount: 1200, ip: "10.20.30.40", risk: 22, velocitySpike: false, geoMismatch: false });
-      await postEvent({ type: "login", user: "trusted-ui-user", attempts: 1, ip: "10.20.30.40", risk: 20, velocitySpike: false, geoMismatch: false });
-      log.textContent = "Trusted user injected. This should build calm memory and usually lower pressure.";
-    }
-
-    if (name === "borderline") {
-      await postEvent({ type: "payment", user: "borderline-ui-user", amount: 9000, ip: "unknown", risk: 58, velocitySpike: false, geoMismatch: false });
-      log.textContent = "Borderline review injected. Good for manual_review territory.";
-    }
-
-    if (name === "cluster") {
-      await postEvent({ type: "payment", user: "cluster-ui-user", amount: 8000, ip: "unknown", risk: 55, velocitySpike: false, geoMismatch: false });
-      await postEvent({ type: "payment", user: "cluster-ui-user", amount: 9500, ip: "unknown", risk: 59, velocitySpike: false, geoMismatch: false });
-      await postEvent({ type: "payment", user: "cluster-ui-user", amount: 11000, ip: "unknown", risk: 63, velocitySpike: false, geoMismatch: false });
-      log.textContent = "MQC payment cluster injected. This is your best shot at divergence from pattern recognition.";
-    }
-
-    if (name === "auth") {
-      await postEvent({ type: "login", user: "auth-ui-user", attempts: 6, ip: "unknown", risk: 76, velocitySpike: true, geoMismatch: true });
-      log.textContent = "Auth cascade injected. Usually hard escalation.";
-    }
-
-    if (name === "repeat") {
-      await postEvent({ type: "login", user: "repeat-ui-user", attempts: 5, ip: "unknown", risk: 66, velocitySpike: true, geoMismatch: false });
-      await postEvent({ type: "payment", user: "repeat-ui-user", amount: 14000, ip: "unknown", risk: 68, velocitySpike: false, geoMismatch: false });
-      await postEvent({ type: "login", user: "repeat-ui-user", attempts: 4, ip: "unknown", risk: 64, velocitySpike: false, geoMismatch: true });
-      log.textContent = "Repeat offender injected. Memory should start pushing harder.";
-    }
-
-    if (name === "newip") {
-      await postEvent({ type: "login", user: "trusted-ui-user", attempts: 1, ip: "172.16.10.55", risk: 28, velocitySpike: false, geoMismatch: false });
-      log.textContent = "Known user on new IP injected. This should test memory tension instead of raw threat.";
-    }
-  } catch (err) {
-    log.textContent = `Scenario failed: ${err.message}`;
-  }
-}
-
-function bindScenarioButtons() {
-  document.querySelectorAll("[data-scenario]").forEach((btn) => {
-    btn.addEventListener("click", () => runScenario(btn.dataset.scenario));
-  });
+  bindModes();
+  bindScenarios();
+  await loadModes();
+  await loadAll();
+  setInterval(loadAll, 4000);
 }
 
 boot();
-connectWs();
-bindScenarioButtons();
-setInterval(pollLatestDecisionContext, 4000);
