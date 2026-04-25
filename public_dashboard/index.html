@@ -1,449 +1,61 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="sv">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="base.app_id" content="69ec26248502c283edbf943c" />
   <title>SignalDesk — Decision Panel + Scenarios</title>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
- 75b26e1 (Save demo-ready SignalDesk decision panel working state)
-  <title>SignalDesk — Decision Panel</title>
- 09023fb (Build multi-mode skeleton and operator v2 dashboard)
+  <meta name="viewport" content="width=device-width,initial-scale=1" /> 75b26e1 (Save demo-ready SignalDesk decision panel working state)
+  <title>SignalDesk — Decision Panel</title> 09023fb (Build multi-mode skeleton and operator v2 dashboard)
+<meta name="base:app_id" content="69ec26248502c283edbf943c" />
+ <title>SignalDesk – AI Decision Engine</title> a0dd08f (Add Base app verification meta tag)
   <style>
-    :root{
-      --bg:#061633;
-      --bg2:#0a1d45;
-      --panel:#0d214d;
-      --panel2:#10285c;
-      --line:#244a93;
-      --text:#eef4ff;
-      --muted:#9db3da;
-      --green:#6ee7b7;
-      --yellow:#facc15;
-      --red:#fb7185;
-      --blue:#60a5fa;
-      --cyan:#67e8f9;
-    }
-
-    * { box-sizing:border-box; }
-    html,body { margin:0; padding:0; }
-    body{
-      font-family: Inter, Arial, Helvetica, sans-serif;
-      background: linear-gradient(180deg, #04112a 0%, #071938 45%, #061633 100%);
-      color:var(--text);
-    }
-
-    .wrap{
-      max-width: 1180px;
-      margin: 0 auto;
-      padding: 18px;
-    }
-
-    .topnote{
-      text-align:center;
-      color:#b8c8e8;
-      font-size:13px;
-      margin-bottom:12px;
-    }
-
-    .title{
-      font-size:22px;
-      font-weight:800;
-      margin:0 0 4px;
-    }
-
-    .subtitle{
-      margin:0 0 16px;
-      color:var(--muted);
-      font-size:13px;
-    }
-
-    .grid6{
-      display:grid;
-      grid-template-columns: repeat(6, 1fr);
-      gap:10px;
-      margin-bottom:12px;
-    }
-
-    .gridMain{
-      display:grid;
-      grid-template-columns: 2.1fr 1.1fr;
-      gap:12px;
-      margin-bottom:12px;
-    }
-
-    .gridBottom{
-      display:grid;
-      grid-template-columns: 1fr 1fr;
-      gap:12px;
-      margin-bottom:12px;
-    }
-
-    .panel{
-      background: linear-gradient(180deg, rgba(17,40,89,.95), rgba(10,28,70,.96));
-      border:1px solid var(--line);
-      border-radius:16px;
-      padding:12px;
-      box-shadow: 0 6px 18px rgba(0,0,0,.18);
-    }
-
-    .metric-label,
-    .section-label{
-      text-transform:uppercase;
-      letter-spacing:.12em;
-      color:#90a7d6;
-      font-size:10px;
-      margin-bottom:8px;
-    }
-
-    .metric-value{
-      font-size:20px;
-      font-weight:800;
-      line-height:1.05;
-      margin-bottom:6px;
-    }
-
-    .metric-sub{
-      color:var(--muted);
-      font-size:11px;
-    }
-
-    .decision-grid{
-      display:grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap:10px;
-      margin-bottom:10px;
-    }
-
-    .mini{
-      border:1px solid var(--line);
-      border-radius:12px;
-      padding:10px;
-      background:rgba(255,255,255,.02);
-      min-height:88px;
-    }
-
-    .mini .metric-value{
-      font-size:16px;
-    }
-
-    .info-grid{
-      display:grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap:10px;
-    }
-
-    .info-box{
-      border:1px solid var(--line);
-      border-radius:12px;
-      padding:10px;
-      background:rgba(255,255,255,.02);
-      min-height:112px;
-      font-size:12px;
-      color:#e9f1ff;
-      overflow:auto;
-    }
-
-    .system-reflection{
-      min-height: 314px;
-      white-space: pre-wrap;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size:12px;
-      color:#e7efff;
-    }
-
-    .list-panel{
-      min-height: 334px;
-    }
-
-    .scroll{
-      max-height: 292px;
-      overflow:auto;
-      padding-right:4px;
-    }
-
-    .feed{
-      min-height: 180px;
-    }
-
-    .card{
-      border-left:3px solid rgba(255,255,255,.25);
-      padding:10px 12px;
-      margin-bottom:10px;
-      border-radius:10px;
-      background:rgba(255,255,255,.03);
-    }
-
-    .card.low { border-left-color: var(--green); }
-    .card.medium { border-left-color: var(--blue); }
-    .card.high { border-left-color: var(--yellow); }
-    .card.critical { border-left-color: var(--red); }
-
-    .row{
-      display:flex;
-      justify-content:space-between;
-      gap:10px;
-      align-items:flex-start;
-    }
-
-    .muted{ color:var(--muted); }
-    .strong{ font-weight:700; }
-
-    .risk-row{
-      display:grid;
-      grid-template-columns: 74px 1fr 28px;
-      gap:12px;
-      align-items:center;
-      margin:18px 0;
-      font-size:12px;
-    }
-
-    .bar{
-      height:6px;
-      border-radius:999px;
-      border:1px solid rgba(147,197,253,.35);
-      background:rgba(255,255,255,.03);
-      overflow:hidden;
-    }
-
-    .bar-fill{
-      height:100%;
-      width:0%;
-      background:linear-gradient(90deg, #7dd3fc, #a7f3d0);
-      border-radius:999px;
-      transition:width .35s ease;
-    }
-
-    .chips{
-      display:flex;
-      flex-wrap:wrap;
-      gap:8px;
-      margin-top:8px;
-    }
-
-    .chip{
-      padding:6px 10px;
-      border-radius:999px;
-      border:1px solid var(--line);
-      background:rgba(255,255,255,.03);
-      font-size:11px;
-      color:#d9e7ff;
-    }
-
-    .status-green{ color:var(--green); }
-    .status-yellow{ color:var(--yellow); }
-    .status-red{ color:var(--red); }
-
-    .footerline{
-      display:flex;
-      justify-content:space-between;
-      gap:10px;
-      margin-top:8px;
-      color:var(--muted);
-      font-size:12px;
-    }
-
-    .empty-state{
-      color:var(--muted);
-      font-size:12px;
-      padding:6px 0;
-    }
-
-    ul.clean{
-      margin:0;
-      padding-left:18px;
-    }
-
-    @media (max-width: 1100px){
-      .grid6{ grid-template-columns: repeat(3, 1fr); }
-      .decision-grid{ grid-template-columns: repeat(2, 1fr); }
-      .info-grid{ grid-template-columns: repeat(2, 1fr); }
-      .gridMain, .gridBottom{ grid-template-columns: 1fr; }
-    }
-
-    @media (max-width: 700px){
-      .grid6{ grid-template-columns: repeat(2, 1fr); }
-      .decision-grid, .info-grid{ grid-template-columns: 1fr; }
-      .risk-row{ grid-template-columns: 70px 1fr 24px; }
-    }
+    body { font-family: Arial; background:#0b0f14; color:#fff; padding:20px; }
+    .card { background:#111827; padding:12px; margin:10px 0; border-radius:8px; }
+    .low { border-left:4px solid #22c55e; }
+    .medium { border-left:4px solid #facc15; }
+    .high { border-left:4px solid #f97316; }
+    .critical { border-left:4px solid #ef4444; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="topnote">Live operator view for why the system acted, what MQC suggested, and what should happen next.</div>
 
-    <h1 class="title">SignalDesk — Decision Panel</h1>
-    <p class="subtitle">Live operator view for why the system acted, what MQC suggested, and what should happen next.</p>
+<h1>SignalDesk – Live Decision Engine</h1>
 
-    <section class="grid6">
-      <div class="panel">
-        <div class="metric-label">Status</div>
-        <div id="statusValue" class="metric-value">—</div>
-        <div id="statusSub" class="metric-sub">System state</div>
-      </div>
+<div class="card">
+  Status: <span id="statusValue">—</span><br>
+  Drift: <span id="driftValue">—</span><br>
+  Events: <span id="eventsLoadedValue">—</span><br>
+  Avg Risk: <span id="avgRiskValue">—</span><br>
+</div>
 
-      <div class="panel">
-        <div class="metric-label">Drift</div>
-        <div id="driftValue" class="metric-value">—</div>
-        <div id="driftSub" class="metric-sub">Identity drift</div>
-      </div>
+<div class="card">
+  Current Decision: <span id="currentDecisionValue">—</span><br>
+  <span id="currentDecisionSub"></span>
+</div>
 
-      <div class="panel">
-        <div class="metric-label">Baseline Risk</div>
-        <div id="baselineRiskValue" class="metric-value">—</div>
-        <div id="baselineRiskSub" class="metric-sub">System baseline</div>
-      </div>
+<div class="card">
+  <strong>System Reflection</strong><br>
+  <div id="systemReflection">Waiting...</div>
+</div>
 
-      <div class="panel">
-        <div class="metric-label">Events Loaded</div>
-        <div id="eventsLoadedValue" class="metric-value">—</div>
-        <div id="eventsLoadedSub" class="metric-sub">Recent live events</div>
-      </div>
+<div class="card">
+  <strong>Live Events</strong>
+  <div id="liveEvents"></div>
+</div>
 
-      <div class="panel">
-        <div class="metric-label">AVG Risk</div>
-        <div id="avgRiskValue" class="metric-value">—</div>
-        <div id="avgRiskSub" class="metric-sub">Recent average</div>
-      </div>
+<div class="card">
+  <strong>Decision Feed</strong>
+  <div id="decisionFeed"></div>
+</div>
 
-      <div class="panel">
-        <div class="metric-label">Top Action</div>
-        <div id="topActionValue" class="metric-value">—</div>
-        <div id="topActionSub" class="metric-sub">Strongest recent action</div>
-      </div>
-    </section>
+<div class="card">
+  Connection: <span id="connectionStatus">—</span><br>
+  Auth: <span id="authStatus">—</span>
+</div>
 
-    <section class="gridMain">
-      <div class="panel">
-        <div class="section-label">Decision Panel</div>
+<script src="/app.js"></script>
 
-        <div class="decision-grid">
-          <div class="mini">
-            <div class="metric-label">Current Decision</div>
-            <div id="currentDecisionValue" class="metric-value">—</div>
-            <div id="currentDecisionSub" class="metric-sub">Score — n/a</div>
-          </div>
-
-          <div class="mini">
-            <div class="metric-label">SignalDesk</div>
-            <div id="signalDeskValue" class="metric-value">—</div>
-            <div id="signalDeskSub" class="metric-sub">SignalDesk weighted rule engine</div>
-          </div>
-
-          <div class="mini">
-            <div class="metric-label">MQC Suggestion</div>
-            <div id="mqcSuggestionValue" class="metric-value">—</div>
-            <div id="mqcSuggestionSub" class="metric-sub">Comparison state</div>
-          </div>
-
-          <div class="mini">
-            <div class="metric-label">Next Best Action</div>
-            <div id="nextBestActionValue" class="metric-value">—</div>
-            <div id="nextBestActionSub" class="metric-sub">Await next signal</div>
-          </div>
-        </div>
-
-        <div class="info-grid">
-          <div class="info-box">
-            <div class="metric-label">Decision Reasoning</div>
-            <div id="decisionReasoning">No explicit reason codes.</div>
-          </div>
-
-          <div class="info-box">
-            <div class="metric-label">Memory Factors</div>
-            <div id="memoryFactors">No memory factors triggered</div>
-          </div>
-
-          <div class="info-box">
-            <div class="metric-label">Runtime Notes</div>
-            <div id="runtimeNotes">Awaiting live incident.</div>
-          </div>
-
-          <div class="info-box">
-            <div class="metric-label">Divergence Explanation</div>
-            <div id="divergenceExplanation">No comparison yet.</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="panel system-reflection">
-        <div class="metric-label">System Reflection</div>
-        <div id="systemReflection">Awaiting live data.</div>
-      </div>
-    </section>
-
-    <section class="gridMain">
-      <div class="panel list-panel">
-        <div class="section-label">Recent Live Events</div>
-        <div id="incidentList" class="scroll">
-          <div class="empty-state">No live incidents yet.</div>
-        </div>
-      </div>
-
-      <div class="panel list-panel">
-        <div class="section-label">Risk Distribution</div>
-
-        <div class="risk-row">
-          <div>0–44 / low</div>
-          <div class="bar"><div id="bucketLowBar" class="bar-fill"></div></div>
-          <div id="bucketLowCount">0</div>
-        </div>
-
-        <div class="risk-row">
-          <div>45–71 / medium</div>
-          <div class="bar"><div id="bucketMediumBar" class="bar-fill"></div></div>
-          <div id="bucketMediumCount">0</div>
-        </div>
-
-        <div class="risk-row">
-          <div>72–89 / high</div>
-          <div class="bar"><div id="bucketHighBar" class="bar-fill"></div></div>
-          <div id="bucketHighCount">0</div>
-        </div>
-
-        <div class="risk-row">
-          <div>90–100 / critical</div>
-          <div class="bar"><div id="bucketCriticalBar" class="bar-fill"></div></div>
-          <div id="bucketCriticalCount">0</div>
-        </div>
-      </div>
-    </section>
-
-    <section class="gridBottom">
-      <div class="panel feed">
-        <div class="section-label">Decision Feed</div>
-        <div id="decisionFeed">
-          <div class="empty-state">Awaiting decision stream.</div>
-        </div>
-      </div>
-
-      <div class="panel feed">
-        <div class="section-label">MQC Insight Feed</div>
-        <div id="mqcInsightFeed">
-          <div class="empty-state">MQC comparison state not yet available.</div>
-        </div>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="section-label">Adversarial Scenarios</div>
-      <div class="chips">
-        <div class="chip">Trusted user</div>
-        <div class="chip">Borderline review</div>
-        <div class="chip">MQC payment cluster</div>
-        <div class="chip">Auth cascade</div>
-        <div class="chip">Repeat offender</div>
-        <div class="chip">Known user, new IP</div>
-      </div>
-
-      <div class="footerline">
-        <div>Connection: <span id="connectionStatus">booting…</span></div>
-        <div>Auth: <span id="authStatus">live</span></div>
-      </div>
-    </section>
-  </div>
-
-  <script src="./app.js"></script>
 </body>
 </html>
