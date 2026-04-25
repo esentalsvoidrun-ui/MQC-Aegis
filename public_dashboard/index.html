@@ -1,56 +1,13 @@
 <!DOCTYPE html>
-<html lang="sv">
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="base:app_id" content="69ec26248502c283edbf943c" />
-  <title>SignalDesk — Decision Panel</title>
-<style>
-    body { font-family: Arial; background:#0b0f14; color:#fff; padding:20px; }
-    .card { background:#111827; padding:12px; margin:10px 0; border-radius:8px; }
-    .low { border-left:4px solid #22c55e; }
-    .medium { border-left:4px solid #facc15; }
-    .high { border-left:4px solid #f97316; }
-    .critical { border-left:4px solid #ef4444; }
-  </style>
+  <meta charset="UTF-8">
+  <meta name="base:app_id" content="69ec26248502c283edbf943c">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SignalDesk</title>
 </head>
-<body>
-
-<h1>SignalDesk – Live Decision Engine</h1>
-
-<div class="card">
-  Status: <span id="statusValue">—</span><br>
-  Drift: <span id="driftValue">—</span><br>
-  Events: <span id="eventsLoadedValue">—</span><br>
-  Avg Risk: <span id="avgRiskValue">—</span><br>
-</div>
-
-<div class="card">
-  Current Decision: <span id="currentDecisionValue">—</span><br>
-  <span id="currentDecisionSub"></span>
-</div>
-
-<div class="card">
-  <strong>System Reflection</strong><br>
-  <div id="systemReflection">Waiting...</div>
-</div>
-
-<div class="card">
-  <strong>Live Events</strong>
-  <div id="liveEvents"></div>
-</div>
-
-<div class="card">
-  <strong>Decision Feed</strong>
-  <div id="decisionFeed"></div>
-</div>
-
-<div class="card">
-  Connection: <span id="connectionStatus">—</span><br>
-  Auth: <span id="authStatus">—</span>
-</div>
-
-<script src="/app.js"></script>
-
+<body style="margin:0;background:#071226;color:#eaf1ff;font-family:Arial,sans-serif;padding:40px;">
+  <h1>SignalDesk</h1>
+  <p>The decision layer for onchain payments.</p>
 </body>
 </html>
